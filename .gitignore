@@ -1,0 +1,56 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.venv*/
+pip-wheel-metadata/
+
+# SQLite databases & backups
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.bak
+*.backup
+
+# Local data / exports
+*.xlsx
+*.xls
+exports/
+*.csv
+
+# OS-specific
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Icon?
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Flask / instance
+instance/
+*.log
+
+# PyInstaller
+*.manifest
+*.spec
+build/
+dist/
+
+# Unit test / coverage
+htmlcov/
+.tox/
+.nox/
+.coverage*
+.cache
+pytest_cache/

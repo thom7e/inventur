@@ -1,0 +1,338 @@
+﻿{% extends "base.html" %}
+{% block title %}Inventur &Uuml;bersicht{% endblock %}
+
+{% block page_header %}
+<div class="main-header">
+    <div>
+        <h1 class="main-title">&Uuml;bersicht Inventur</h1>
+        <p class="text-muted mb-0">Gespeicherte Inventuren nach Kostenstelle und Jahr</p>
+    </div>
+    <button type="button" class="btn btn-outline-secondary mr-2" id="exportFilteredButton">
+        Auswahl exportieren (KST + Jahr)
+    </button>
+    <button type="button" class="btn btn-custom" id="exportInventurButton">
+        Komplette &Uuml;bersicht exportieren
+    </button>
+
+</div>
+{% endblock %}
+
+{% block content %}
+<section class="section-card">
+    <div class="row">
+        <div class="col-md-4 mb-4 mb-md-0">
+            <h2 class="h5">Filter</h2>
+
+            {# --- Jahr-Filter --- #}
+            <form id="yearFilterForm" method="get" action="{{ url_for('uebersicht_inventur') }}" class="mb-3">
+                <label for="jahrSelect" class="d-block mb-1">Jahr auswählen</label>
+                <select class="form-control form-control-lg" id="jahrSelect" name="jahr">
+                    <option value="all" {{ 'selected' if not ausgewaehltes_jahr }}>Alle Jahre</option>
+                    {% for y in verfuegbare_jahre %}
+                        <option value="{{ y }}" {{ 'selected' if ausgewaehltes_jahr==y }}>{{ y }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+
+            <div class="custom-control custom-checkbox mb-2">
+                <input type="checkbox" class="custom-control-input" id="alleKostenstellen">
+                <label class="custom-control-label" for="alleKostenstellen">Alle Kostenstellen anzeigen</label>
+            </div>
+            <div id="kostenstellenFilter" class="border rounded p-3" style="max-height: 320px; overflow-y: auto;">
+                {% for kostenstelle in alle_kostenstellen %}
+                <div class="custom-control custom-checkbox mb-2">
+                    <input type="checkbox" class="custom-control-input kostenstelleCheckbox" id="ks-{{ loop.index }}" value="{{ kostenstelle }}">
+                    <label class="custom-control-label" for="ks-{{ loop.index }}">{{ kostenstelle }}</label>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="col-md-8">
+            {% if not gruppierte_inventur %}
+                <p class="text-muted">Noch keine Inventur gespeichert.</p>
+            {% else %}
+                {% macro f2(v) -%}{{ '%.2f' | format(v|float) }}{%- endmacro %}
+
+                {% for kostenstelle, details in gruppierte_inventur.items() %}
+                <div class="card mb-3 kostenstelle-card" data-kostenstelle="{{ kostenstelle }}">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <strong>{{ kostenstelle }}</strong>
+                        <span class="small text-light">
+                            {% if ausgewaehltes_jahr %}Jahr: {{ ausgewaehltes_jahr }} · {% endif %}
+                            Summe: {{ '%.2f' | format(details.gesamtsumme|float) }}
+                        </span>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-sm mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Jahr</th>
+                                        <th>Artikelname</th>
+                                        <th>Menge</th>
+                                        <th>Einheit</th>
+                                        <th>Preis</th>
+                                        <th>Gesamtpreis</th>
+                                        <th>Aktionen</th> 
+                                    </tr>
+                                </thead>
+                               <tbody>
+                                {% macro f2(v) -%}{{ '%.2f' | format(v|float) }}{%- endmacro %}
+
+                                {% for inventur in details.materialien %}
+                                    <tr data-rid="{{ inventur._rid if inventur._rid is defined }}">
+                                    <td>{{ inventur.jahr }}</td>
+                                    <td>{{ inventur.artikelname }}</td>
+                                    <td>{{ f2(inventur.menge) }}</td>
+                                    <td>{{ inventur.einheit }}</td>
+                                    <td>{{ f2(inventur.preis) }}</td>
+                                    <td>{{ f2(inventur.gesamtpreis) }}</td>
+                                    <td>
+                                        {% if inventur._rid is defined and inventur.jahr == active_inventur_year %}
+                                        <button type="button" class="btn btn-sm btn-outline-primary inv-edit" data-id="{{ inventur._rid }}">Bearbeiten</button>
+                                        <button type="button" class="btn btn-sm btn-outline-danger  inv-delete" data-id="{{ inventur._rid }}">Löschen</button>
+                                        {% else %}
+                                        <span class="text-muted small">—</span>
+                                        {% endif %}
+                                    </td>
+                                    </tr>
+                                {% endfor %}
+
+                                <tr class="font-weight-bold">
+                                    <td colspan="5" class="text-right">Summe</td>
+                                    <td>{{ '%.2f' | format(details.gesamtsumme|float) }}</td>
+                                    <td></td>
+                                </tr>
+                                </tbody>
+
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% endif %}
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+
+{% block scripts %}
+<script>
+(function () {
+    var alleCheckbox = document.getElementById('alleKostenstellen');
+    var kostenstelleCheckboxes = document.querySelectorAll('.kostenstelleCheckbox');
+    var kostenstelleCards = document.querySelectorAll('.kostenstelle-card');
+    var exportButton = document.getElementById('exportInventurButton');
+
+    // --- Jahr-Autosubmit ---
+    var jahrSelect = document.getElementById('jahrSelect');
+    var yearForm = document.getElementById('yearFilterForm');
+    if (jahrSelect && yearForm) {
+        jahrSelect.addEventListener('change', function () {
+            yearForm.submit();
+        });
+    }
+
+    function updateVisibility() {
+        var active = [];
+        kostenstelleCheckboxes.forEach(function (checkbox) {
+            if (checkbox.checked) active.push(checkbox.value);
+        });
+        if (alleCheckbox.checked || !active.length) {
+            kostenstelleCards.forEach(function (card) { card.style.display = ''; });
+            return;
+        }
+        kostenstelleCards.forEach(function (card) {
+            var value = card.dataset.kostenstelle;
+            card.style.display = active.indexOf(value) !== -1 ? '' : 'none';
+        });
+    }
+
+    if (alleCheckbox) {
+        alleCheckbox.addEventListener('change', function () {
+            if (alleCheckbox.checked) {
+                kostenstelleCheckboxes.forEach(function (c) { c.checked = false; });
+            }
+            updateVisibility();
+        });
+    }
+    kostenstelleCheckboxes.forEach(function (checkbox) {
+        checkbox.addEventListener('change', function () {
+            if (kostenstelleCheckboxes.length) alleCheckbox.checked = false;
+            updateVisibility();
+        });
+    });
+
+    // Export: Jahr (aus Select) mitsenden
+    if (exportButton) {
+        exportButton.addEventListener('click', function () {
+            var fd = new FormData();
+            if (jahrSelect && jahrSelect.value && jahrSelect.value !== 'all') {
+                fd.append('jahr', jahrSelect.value);
+            } else {
+                fd.append('jahr', 'all');
+            }
+            fetch('/export_inventur', { method: 'POST', body: fd })
+            .then(function (response) {
+                if (!response.ok) { window.showToast('Export fehlgeschlagen.', 'error'); return; }
+                return response.blob();
+            })
+            .then(function (blob) {
+                if (!blob) return;
+                var url = window.URL.createObjectURL(blob);
+                var link = document.createElement('a');
+                link.style.display = 'none';
+                link.href = url;
+                link.download = 'Inventurdaten' + (jahrSelect && jahrSelect.value && jahrSelect.value !== 'all' ? ('_' + jahrSelect.value) : '') + '.xlsx';
+                document.body.appendChild(link);
+                link.click();
+                window.URL.revokeObjectURL(url);
+                window.showToast('Export gestartet.', 'success');
+            })
+            .catch(function () { window.showToast('Export fehlgeschlagen.', 'error'); });
+        });
+    }
+
+    
+})();
+(function(){
+  // Delegation: Editieren / Löschen in der Tabelle
+  var container = document.querySelector('.section-card'); // oder exakter: die card-body
+  if (!container) return;
+
+  function getRowValues(tr){
+    var tds = tr.querySelectorAll('td');
+    // Annahme Spalten: Jahr, Artikelname, Menge, Einheit, Preis, Gesamtpreis, Aktionen
+    return {
+      jahr:       tds[0] && tds[0].textContent.trim(),
+      artikel:    tds[1] && tds[1].textContent.trim(),
+      menge:      tds[2] && tds[2].textContent.trim(),
+      einheit:    tds[3] && tds[3].textContent.trim(),
+      preis:      tds[4] && tds[4].textContent.trim(),
+      gesamt:     tds[5] && tds[5].textContent.trim()
+    };
+  }
+
+  container.addEventListener('click', function(ev){
+    var editBtn = ev.target.closest('.inv-edit');
+    var delBtn  = ev.target.closest('.inv-delete');
+    if (!editBtn && !delBtn) return;
+
+    var id = (editBtn || delBtn).dataset.id;
+    if (!id) return;
+
+    var tr = (editBtn || delBtn).closest('tr');
+    var cur = getRowValues(tr);
+
+    if (editBtn){
+      var name = window.prompt('Artikelname:', cur.artikel); if (!name) return;
+      var unit = window.prompt('Einheit:', cur.einheit); if (!unit) return;
+      var menge = window.prompt('Menge:', String(cur.menge).replace(',', '.')); if (!menge) return;
+      var preis = window.prompt('Preis:', String(cur.preis).replace(',', '.')); if (preis==null) return;
+
+      fetch('/admin/inventur/update_row', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          id: id,
+          artikelname: name.trim(),
+          einheit: unit.trim(),
+          menge: String(menge).trim(),
+          preis: String(preis).trim(),
+        })
+      })
+      .then(window.handleJsonResponse)
+      .then(function(res){
+        window.showToast && window.showToast(res.message || 'Aktualisiert.', 'success');
+        setTimeout(function(){ window.location.reload(); }, 600);
+      })
+      .catch(function(){ /* Fehler-Toast zentral */ });
+    }
+
+    if (delBtn){
+      if (!window.confirm('Diesen Eintrag wirklich löschen?')) return;
+      fetch('/admin/inventur/delete_row', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          id: id,
+
+        })
+
+
+      })
+      .then(window.handleJsonResponse)
+      .then(function(res){
+        window.showToast && window.showToast(res.message || 'Gelöscht.', 'success');
+        setTimeout(function(){ window.location.reload(); }, 600);
+      })
+      .catch(function(){ /* Fehler-Toast zentral */ });
+    }
+  });
+})();
+</script>
+<script>
+(function () {
+  var jahrSelect = document.getElementById('jahrSelect');
+  var exportFilteredBtn = document.getElementById('exportFilteredButton');
+
+  function selectedKostenstellen() {
+    // Alle Card-Checkboxen auslesen:
+    var checks = Array.prototype.slice.call(document.querySelectorAll('.kostenstelleCheckbox'));
+    var checked = checks.filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
+    var alle = document.getElementById('alleKostenstellen');
+    // Logik: wenn "Alle" aktiv ODER keine ausgewählt -> "all"
+    if ((alle && alle.checked) || checked.length === 0) return 'all';
+    return checked;
+  }
+
+  if (exportFilteredBtn) {
+    exportFilteredBtn.addEventListener('click', function () {
+      var fd = new FormData();
+      var jahr = (jahrSelect && jahrSelect.value && jahrSelect.value !== 'all') ? jahrSelect.value : 'all';
+      fd.append('jahr', jahr);
+
+      var kst = selectedKostenstellen();
+      if (kst === 'all') {
+        fd.append('kostenstellen', 'all');
+      } else {
+        kst.forEach(function (val) { fd.append('kostenstellen[]', val); });
+      }
+
+      fetch('/export_inventur_selection', { method: 'POST', body: fd })
+        .then(function (res) {
+          if (!res.ok) throw new Error('Export fehlgeschlagen');
+          return res.blob();
+        })
+        .then(function (blob) {
+          var fn = 'Inventur_Export';
+          if (jahr && jahr !== 'all') fn += '_' + jahr;
+          var k = selectedKostenstellen();
+          if (Array.isArray(k) && k.length === 1) {
+            // Dateiname etwas sprechender
+            fn += '_' + k[0].replace(/\s+/g, '_');
+          }
+          fn += '.xlsx';
+
+          var url = window.URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = fn;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          window.URL.revokeObjectURL(url);
+          window.showToast && window.showToast('Export gestartet.', 'success');
+        })
+        .catch(function () {
+          window.showToast && window.showToast('Export fehlgeschlagen.', 'error');
+        });
+    });
+  }
+})();
+</script>
+
+{% endblock %}
+
