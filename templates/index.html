@@ -19,11 +19,11 @@
     <form id="addArticleForm" class="form-row align-items-end">
         <div class="form-group col-lg-5">
             <label for="artikelname">Artikelname</label>
-            <input type="text" class="form-control form-control-lg" id="artikelname" required>
+            <input type="text" class="form-control form-control-lg" id="artikelname" maxlength="200" required>
         </div>
         <div class="form-group col-lg-3">
             <label for="einheit">Einheit</label>
-            <input type="text" class="form-control form-control-lg" id="einheit" required>
+            <input type="text" class="form-control form-control-lg" id="einheit" maxlength="50" required>
         </div>
         <div class="form-group col-lg-2">
             <label for="preis">Preis (€)</label>
@@ -39,7 +39,7 @@
     <form id="searchForm" method="post" autocomplete="off">
         <div class="form-group mb-3">
             <label class="sr-only" for="search_query">Artikel suchen</label>
-            <input type="text" class="form-control form-control-lg" id="search_query" name="search_query" placeholder="Artikelname eingeben" value="{{ search_query }}">
+            <input type="text" class="form-control form-control-lg" id="search_query" name="search_query" placeholder="Artikelname eingeben" value="{{ search_query }}" maxlength="200">
         </div>
         <p class="text-muted small mb-2">Tippen Sie mindestens zwei Zeichen - Ergebnisse werden automatisch aktualisiert.</p>
         <div class="form-group mb-0">
@@ -74,6 +74,7 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h2 class="mb-0">Warenkorb</h2>
         <form method="post" action="{{ url_for('clear_cart') }}">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline-secondary btn-sm px-4 py-2">Warenkorb leeren</button>
         </form>
     </div>

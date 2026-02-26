@@ -174,6 +174,7 @@
             } else {
                 fd.append('jahr', 'all');
             }
+            // /export_inventur exportiert alle Kostenstellen ohne Filter
             fetch('/export_inventur', { method: 'POST', body: fd })
             .then(function (response) {
                 if (!response.ok) { window.showToast('Export fehlgeschlagen.', 'error'); return; }

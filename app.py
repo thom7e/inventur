@@ -1,7 +1,9 @@
 ﻿import io
 import os
 import re
+import secrets
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 import sqlite3
 import logging
 from contextlib import contextmanager
@@ -72,6 +74,93 @@ def respond_error(message: str, status: int = 400):
 
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# CSRF-Schutz
+# ---------------------------------------------------------------------------
+
+def generate_csrf_token() -> str:
+    """Gibt den Session-CSRF-Token zurück (wird bei Bedarf erstellt)."""
+    if 'csrf_token' not in session:
+        session['csrf_token'] = secrets.token_hex(32)
+    return session['csrf_token']
+
+
+def validate_csrf() -> bool:
+    """Prüft den CSRF-Token aus Formular, JSON-Body oder HTTP-Header."""
+    expected = session.get('csrf_token')
+    if not expected:
+        return False
+    token = (
+        request.form.get('_csrf_token')
+        or request.headers.get('X-CSRF-Token')
+        or (request.get_json(silent=True) or {}).get('_csrf_token')
+    )
+    return secrets.compare_digest(str(token or ''), str(expected))
+
+
+def require_csrf(f):
+    """Dekorator: Validiert den CSRF-Token bei zustandsändernden Methoden."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
+            if not validate_csrf():
+                if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return respond_error('Ungültiger CSRF-Token.', status=403)
+                return Response('Ungültiger CSRF-Token.', status=403)
+        return f(*args, **kwargs)
+    return decorated
+
+
+def require_admin(f):
+    """Dekorator: Erfordert eine aktive Admin-Session."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('is_admin'):
+            if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return respond_error('Unbefugter Zugriff', status=403)
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ---------------------------------------------------------------------------
+# Audit-Log
+# ---------------------------------------------------------------------------
+
+def ensure_audit_log_table() -> None:
+    with db_connection(COST_CENTER_DB) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT    NOT NULL,
+                user      TEXT    NOT NULL,
+                action    TEXT    NOT NULL,
+                details   TEXT
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log(timestamp)"
+        )
+        conn.commit()
+
+
+def audit_log(action: str, details: str = '') -> None:
+    """Schreibt einen Audit-Log-Eintrag in die Datenbank und den Logger."""
+    user = 'admin' if session.get('is_admin') else 'anonym'
+    ts = datetime.now(timezone.utc).isoformat()
+    logger.info("AUDIT | %s | %s | %s | %s", ts, user, action, details)
+    try:
+        with db_connection(COST_CENTER_DB) as conn:
+            conn.execute(
+                "INSERT INTO audit_log (timestamp, user, action, details) VALUES (?, ?, ?, ?)",
+                (ts, user, action, details),
+            )
+            conn.commit()
+    except sqlite3.Error:
+        logger.exception("Audit-Log konnte nicht geschrieben werden")
+
 
 @contextmanager
 def db_connection(db_path: str):
@@ -439,13 +528,12 @@ ADMIN_PASSWORD_HASH = _admin_password_hash
 
 
 def _bootstrap() -> None:
-    # bestehende Initialisierungen, z.B. Tabellen sicherstellen
     try:
         ensure_cart_table()
         ensure_cost_center_archive_table()
-        ensure_app_meta_table()  # <--- NEU
+        ensure_app_meta_table()
         ensure_cost_center_unique_index()
-
+        ensure_audit_log_table()
     except Exception:
         app.logger.exception("Bootstrap failed")
 
@@ -457,6 +545,12 @@ else:
     _bootstrap()
 
 
+@app.context_processor
+def inject_csrf_token():
+    """Macht csrf_token() in allen Templates verfügbar."""
+    return {'csrf_token': generate_csrf_token}
+
+
 @app.before_request
 def persist_session() -> None:
     session.permanent = True
@@ -465,6 +559,7 @@ def persist_session() -> None:
 
 
 @app.route('/login', methods=['GET', 'POST'])
+@require_csrf
 def login():
     error = None
     if request.method == 'POST':
@@ -472,7 +567,9 @@ def login():
         password = request.form.get('password', '')
         if username != ADMIN_USERNAME or not check_password_hash(ADMIN_PASSWORD_HASH, password):
             error = 'Ungültiger Benutzername oder Passwort'
+            logger.warning("Fehlgeschlagener Login-Versuch für Benutzer: %s", username)
         else:
+            audit_log('admin_login', f'Benutzer: {username}')
             session.clear()
             session['is_admin'] = True
             session['cart_token'] = uuid4().hex
@@ -487,9 +584,8 @@ def logout():
 
 
 @app.route('/admin')
+@require_admin
 def admin():
-    if not session.get('is_admin'):
-        return redirect(url_for('login'))
 
     with db_connection(ARTICLE_DB) as conn:
         rows = conn.execute(
@@ -518,10 +614,9 @@ def admin():
     )
 
 @app.route('/admin/clear_cost_centers', methods=['POST'])
+@require_admin
+@require_csrf
 def admin_clear_cost_centers():
-    if not session.get('is_admin'):
-        return respond_error('Unbefugter Zugriff', status=403)
-
     with db_connection(COST_CENTER_DB) as conn:
         cur = conn.execute('DELETE FROM kostenstellen')
         deleted = cur.rowcount if hasattr(cur, 'rowcount') else None
@@ -530,14 +625,14 @@ def admin_clear_cost_centers():
     msg = 'Kostenstellen wurden geleert.'
     if isinstance(deleted, int) and deleted >= 0:
         msg = f'Kostenstellen wurden geleert ({deleted} Einträge).'
+    audit_log('kostenstellen_geleert', f'{deleted if deleted is not None else "?"} Einträge gelöscht')
     return jsonify({'success': True, 'message': msg})
 
 
 @app.route('/admin/add_cost_center', methods=['POST'])
+@require_admin
+@require_csrf
 def admin_add_cost_center():
-    if not session.get('is_admin'):
-        return respond_error('Unbefugter Zugriff', status=403)
-
     data = request.get_json(silent=True) or {}
     nummer = (data.get('nummer') or '').strip()
     bezeichnung = (data.get('bezeichnung') or '').strip()
@@ -545,11 +640,9 @@ def admin_add_cost_center():
     if not nummer or not bezeichnung:
         return respond_error('Nummer und Bezeichnung sind erforderlich.')
 
-    # optional: simple Normalisierung
-    nummer_norm = nummer  # z.B. nummer.upper() wenn du es willst
+    nummer_norm = nummer
 
     with db_connection(COST_CENTER_DB) as conn:
-        # Prüfe Duplikate (case-insensitive)
         exists = conn.execute(
             'SELECT 1 FROM kostenstellen WHERE kostenstellen_nummer = ? COLLATE NOCASE',
             (nummer_norm,)
@@ -563,12 +656,13 @@ def admin_add_cost_center():
         )
         conn.commit()
 
+    audit_log('kostenstelle_hinzugefuegt', f'Nummer: {nummer_norm}, Bezeichnung: {bezeichnung}')
     return jsonify({'success': True, 'message': f'Kostenstelle {nummer_norm} hinzugefügt.'})
 
 @app.route('/admin/bulk_add_cost_centers', methods=['POST'])
+@require_admin
+@require_csrf
 def admin_bulk_add_cost_centers():
-    if not session.get('is_admin'):
-        return respond_error('Unbefugter Zugriff', status=403)
 
     data = request.get_json(silent=True) or {}
     entries = data.get('kostenstellen', [])
@@ -614,13 +708,14 @@ def admin_bulk_add_cost_centers():
     msg = f'{added} Kostenstellen hinzugefügt'
     if skipped:
         msg += f', {skipped} übersprungen (bereits vorhanden)'
+    audit_log('kostenstellen_bulk_hinzugefuegt', f'{added} hinzugefügt, {skipped} übersprungen')
     return jsonify({'success': True, 'message': msg, 'added': added, 'skipped': skipped})
 
 
 @app.route('/admin/inventur/update_row', methods=['POST'])
+@require_admin
+@require_csrf
 def admin_update_inventur_row():
-    if not session.get('is_admin'):
-        return respond_error('Unbefugter Zugriff', status=403)
 
     data = request.get_json(silent=True) or {}
     try:
@@ -658,13 +753,13 @@ def admin_update_inventur_row():
         )
         conn.commit()
 
+    audit_log('inventur_zeile_aktualisiert', f'ID: {rid}, Artikel: {new_name}')
     return jsonify({'success': True, 'message': 'Eintrag aktualisiert.'})
 
 @app.route('/admin/inventur/delete_row', methods=['POST'])
+@require_admin
+@require_csrf
 def admin_delete_inventur_row():
-    if not session.get('is_admin'):
-        return respond_error('Unbefugter Zugriff', status=403)
-
     data = request.get_json(silent=True) or {}
     try:
         rid = int(data.get('id'))
@@ -682,6 +777,7 @@ def admin_delete_inventur_row():
         conn.execute("DELETE FROM inventur WHERE rowid = ?", (rid,))
         conn.commit()
 
+    audit_log('inventur_zeile_geloescht', f'ID: {rid}')
     return jsonify({'success': True, 'message': 'Eintrag gelöscht.'})
 
 
@@ -761,6 +857,7 @@ def admin_search():
 
 
 @app.route('/add_to_cart', methods=['POST'])
+@require_csrf
 def add_to_cart():
     artikelname = request.form.get('artikelname', '').strip()
     menge_raw = request.form.get('menge')
@@ -786,6 +883,7 @@ def add_to_cart():
 
 
 @app.route('/add_artikel', methods=['POST'])
+@require_csrf
 def add_artikel():
     data = request.get_json(silent=True) or {}
     artikelname = (data.get('artikelname') or '').strip()
@@ -817,6 +915,7 @@ def add_artikel():
 
 
 @app.route('/clear_cart', methods=['POST'])
+@require_csrf
 def clear_cart():
     cart_token = session.get('cart_token')
     clear_cart_items(cart_token)
@@ -825,6 +924,7 @@ def clear_cart():
 
 
 @app.route('/export_excel', methods=['POST'])
+@require_csrf
 def export_excel():
     kostenstelle_nummer = request.form.get('kostenstelle')
 
@@ -905,6 +1005,7 @@ def export_excel():
 
 
 @app.route('/save_to_inventur', methods=['POST'])
+@require_csrf
 def save_to_inventur():
     kostenstelle_nummer = request.form.get('kostenstelle')
     jahr = get_active_inventur_year()
@@ -944,15 +1045,16 @@ def save_to_inventur():
             )
         conn.commit()
 
+    audit_log('inventur_gespeichert', f'Kostenstelle: {kostenstelle}, Jahr: {jahr}, Artikel: {len(cart_items)}')
     clear_cart_items(session.get('cart_token'))
     session['cart_token'] = uuid4().hex
     return redirect(url_for('index'))
 
 
 @app.route('/admin/apply_price_factor', methods=['POST'])
+@require_admin
+@require_csrf
 def apply_price_factor():
-    if not session.get('is_admin'):
-        return respond_error('Unbefugter Zugriff', status=403)
 
     data = request.get_json(silent=True) or {}
     factor_raw = data.get('factor')
@@ -981,13 +1083,14 @@ def apply_price_factor():
             )
         conn.commit()
 
+    audit_log('preisfaktor_angewendet', f'Faktor: {factor}, Nachkommastellen: {rounding_places}')
     return jsonify({'success': True, 'message': 'Preise erfolgreich aktualisiert'})
 
 
 @app.route('/admin/year_end', methods=['POST'])
+@require_admin
+@require_csrf
 def perform_year_end():
-    if not session.get('is_admin'):
-        return respond_error('Unbefugter Zugriff', status=403)
 
     data = request.get_json(silent=True) or {}
     jahr_raw = data.get('jahr')
@@ -1066,18 +1169,17 @@ def perform_year_end():
     if jahr == active_year:
         try:
             set_active_inventur_year(jahr + 1)
-        except Exception:
+        except sqlite3.Error:
             app.logger.exception("Konnte active_inventur_year nicht setzen")
 
+    audit_log('jahresabschluss', f'Jahr: {jahr}')
     return jsonify({'success': True, 'message': 'Jahresabschluss erfolgreich durchgeführt'})
 
 
-
-
 @app.route('/update_article', methods=['POST'])
+@require_admin
+@require_csrf
 def update_article():
-    if not session.get('is_admin'):
-        return respond_error('Unbefugter Zugriff', status=403)
 
     data = request.get_json(silent=True) or {}
     original_artikelname = (data.get('originalArticleName') or '').strip()
@@ -1105,14 +1207,14 @@ def update_article():
         )
         conn.commit()
 
+    audit_log('artikel_aktualisiert', f'Alt: {original_artikelname}, Neu: {new_artikelname}')
     return jsonify({'success': True, 'message': 'Artikel erfolgreich aktualisiert'})
 
 
 @app.route('/delete_article', methods=['POST'])
+@require_admin
+@require_csrf
 def delete_article():
-    if not session.get('is_admin'):
-        return respond_error('Unbefugter Zugriff', status=403)
-
     artikelname = (request.get_json(silent=True) or {}).get('articleName', '').strip()
 
     if not artikelname:
@@ -1122,14 +1224,14 @@ def delete_article():
         conn.execute('DELETE FROM artikel WHERE artikelname = ? COLLATE NOCASE', (artikelname,))
         conn.commit()
 
+    audit_log('artikel_geloescht', f'Artikel: {artikelname}')
     return jsonify({'success': True, 'message': 'Artikel erfolgreich geloescht'})
 
 
 @app.route('/add_article', methods=['POST'])
+@require_admin
+@require_csrf
 def add_article():
-    if not session.get('is_admin'):
-        return respond_error('Unbefugter Zugriff', status=403)
-
     data = request.get_json(silent=True) or {}
     artikelname = (data.get('name') or '').strip()
     einheit = (data.get('einheit') or '').strip()
@@ -1156,6 +1258,7 @@ def add_article():
         )
         conn.commit()
 
+    audit_log('artikel_hinzugefuegt', f'Artikel: {artikelname}, Einheit: {einheit}')
     return jsonify({'success': True, 'message': 'Artikel erfolgreich hinzugefuegt'})
 
 
@@ -1181,8 +1284,7 @@ def uebersicht_inventur():
             else:
                 # Alle Jahre (default, rückwärtskompatibel)
                 rows = conn.execute(
-                    "SELECT rowid as _rid, * FROM inventur WHERE jahr = ? ORDER BY kostenstelle, jahr, artikelname",
-                    (selected_year,),
+                    "SELECT rowid as _rid, * FROM inventur ORDER BY kostenstelle, jahr, artikelname"
                 ).fetchall()
 
         gruppierte_inventur = group_inventur_rows(rows)
@@ -1209,6 +1311,7 @@ def uebersicht_inventur():
 
 
 @app.route('/export_inventur_selection', methods=['POST'])
+@require_csrf
 def export_inventur_selection():
     # Eingaben
     jahr_param = (request.form.get('jahr') or '').strip()
@@ -1337,6 +1440,94 @@ def export_inventur_selection():
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
 
+
+
+@app.route('/export_inventur', methods=['POST'])
+@require_csrf
+def export_inventur():
+    """Vollständiger Export aller Inventurdaten (alle Kostenstellen)."""
+    jahr_param = (request.form.get('jahr') or '').strip()
+    selected_year = None
+    if jahr_param and jahr_param.lower() != 'all':
+        try:
+            selected_year = int(jahr_param)
+        except ValueError:
+            selected_year = None
+    return _export_inventur_core(selected_year=selected_year, kst_filter=None)
+
+
+def _export_inventur_core(selected_year, kst_filter):
+    """Erstellt den Excel-Export für die angegebenen Filter."""
+    base_sql = ('SELECT kostenstelle, jahr, artikelname, einheit, menge, preis, gesamtpreis '
+                'FROM inventur')
+    conds, params = [], []
+    if selected_year is not None:
+        conds.append('jahr = ?')
+        params.append(selected_year)
+    if kst_filter:
+        placeholders = ','.join(['?'] * len(kst_filter))
+        conds.append(f'kostenstelle IN ({placeholders})')
+        params.extend(kst_filter)
+    where = (' WHERE ' + ' AND '.join(conds)) if conds else ''
+    order = ' ORDER BY kostenstelle, jahr, artikelname'
+
+    with db_connection(COST_CENTER_DB) as conn:
+        rows = conn.execute(base_sql + where + order, tuple(params)).fetchall()
+
+    gruppierte = group_inventur_rows(rows)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Inventurdaten'
+    bold_font = Font(bold=True)
+    header_fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+    currency_format = 'EUR #,##0.00'
+    gesamtsumme_aller = Decimal('0')
+
+    for kostenstelle, details in gruppierte.items():
+        ws.append([kostenstelle])
+        ws.cell(row=ws.max_row, column=1).font = bold_font
+        ws.append(['Jahr', 'Artikelname', 'Menge', 'Einheit', 'Preis', 'Gesamtpreis'])
+        for cell in ws[ws.max_row]:
+            cell.font = bold_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center')
+        for material in details['materialien']:
+            ws.append([
+                material.get('jahr'), material.get('artikelname'), material.get('menge'),
+                material.get('einheit'), material.get('preis'), material.get('gesamtpreis'),
+            ])
+        gesamt = quantize_currency(details['gesamtsumme'])
+        ws.append(['', '', '', '', 'Gesamt:', float(gesamt)])
+        ws.cell(row=ws.max_row, column=5).font = bold_font
+        ws.cell(row=ws.max_row, column=6).font = bold_font
+        gesamtsumme_aller += gesamt
+
+    ws.append(['', '', '', '', 'Gesamtsumme aller Kostenstellen:', float(quantize_currency(gesamtsumme_aller))])
+    for cell in ws[ws.max_row]:
+        cell.font = bold_font
+
+    for col_index in range(1, ws.max_column + 1):
+        col_letter = get_column_letter(col_index)
+        max_len = max((len(str(c.value)) for c in ws[col_letter] if c.value is not None), default=0)
+        ws.column_dimensions[col_letter].width = min(max_len + 2, 40)
+        if col_letter in {'E', 'F'}:
+            for cell in ws[col_letter]:
+                cell.number_format = currency_format
+
+    fname = 'Inventur_Komplett'
+    if selected_year is not None:
+        fname += f'_{selected_year}'
+    fname += '.xlsx'
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=fname,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
 
 
 def fetch_available_years():
