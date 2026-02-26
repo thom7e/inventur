@@ -7,11 +7,13 @@
         <h1 class="main-title">&Uuml;bersicht Inventur</h1>
         <p class="text-muted mb-0">Gespeicherte Inventuren nach Kostenstelle und Jahr</p>
     </div>
-    <button type="button" class="btn btn-outline-secondary mr-2" id="exportFilteredButton">
-        Auswahl exportieren (KST + Jahr)
+    <button type="button" class="btn btn-outline-secondary mr-2" id="exportFilteredButton"
+            aria-label="Gefilterte Auswahl als Excel exportieren">
+        Auswahl exportieren
     </button>
-    <button type="button" class="btn btn-custom" id="exportInventurButton">
-        Komplette &Uuml;bersicht exportieren
+    <button type="button" class="btn btn-custom" id="exportInventurButton"
+            aria-label="Komplette Inventur als Excel exportieren">
+        Komplett exportieren
     </button>
 
 </div>
@@ -115,6 +117,66 @@
         </div>
     </div>
 </section>
+
+{# Modal: Inventur-Zeile bearbeiten #}
+<div class="modal fade" id="invEditModal" tabindex="-1" aria-labelledby="invEditModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="invEditModalLabel">Eintrag bearbeiten</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Schließen">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="invEditId">
+                <div class="form-group">
+                    <label for="invEditArtikel">Artikelname</label>
+                    <input type="text" class="form-control" id="invEditArtikel" maxlength="200" required>
+                </div>
+                <div class="form-group">
+                    <label for="invEditEinheit">Einheit</label>
+                    <input type="text" class="form-control" id="invEditEinheit" maxlength="50" required>
+                </div>
+                <div class="form-group">
+                    <label for="invEditMenge">Menge</label>
+                    <input type="number" class="form-control" id="invEditMenge" step="0.001" min="0.001" required>
+                </div>
+                <div class="form-group">
+                    <label for="invEditPreis">Preis (€)</label>
+                    <input type="number" class="form-control" id="invEditPreis" step="0.01" min="0" required>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Abbrechen</button>
+                <button type="button" class="btn btn-custom" id="invEditSaveBtn">Änderungen speichern</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Modal: Inventur-Zeile löschen #}
+<div class="modal fade" id="invDeleteModal" tabindex="-1" aria-labelledby="invDeleteModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="invDeleteModalLabel">Eintrag löschen</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Schließen">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="invDeleteId">
+                <p>Soll der Eintrag <strong id="invDeleteArtName"></strong> wirklich gelöscht werden? Diese Aktion kann nicht rückgängig gemacht werden.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Abbrechen</button>
+                <button type="button" class="btn btn-danger" id="invDeleteConfirmBtn">Löschen</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 
@@ -165,54 +227,51 @@
         });
     });
 
-    // Export: Jahr (aus Select) mitsenden
+    function triggerDownload(blob, filename) {
+        var url = window.URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.style.display = 'none'; a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
+        window.URL.revokeObjectURL(url);
+    }
+
     if (exportButton) {
         exportButton.addEventListener('click', function () {
             var fd = new FormData();
-            if (jahrSelect && jahrSelect.value && jahrSelect.value !== 'all') {
-                fd.append('jahr', jahrSelect.value);
-            } else {
-                fd.append('jahr', 'all');
-            }
-            // /export_inventur exportiert alle Kostenstellen ohne Filter
+            fd.append('jahr', (jahrSelect && jahrSelect.value && jahrSelect.value !== 'all') ? jahrSelect.value : 'all');
+            window.setButtonLoading && window.setButtonLoading(exportButton, true);
             fetch('/export_inventur', { method: 'POST', body: fd })
-            .then(function (response) {
-                if (!response.ok) { window.showToast('Export fehlgeschlagen.', 'error'); return; }
-                return response.blob();
+            .then(function (res) {
+                if (!res.ok) throw new Error('Export fehlgeschlagen');
+                return res.blob();
             })
             .then(function (blob) {
-                if (!blob) return;
-                var url = window.URL.createObjectURL(blob);
-                var link = document.createElement('a');
-                link.style.display = 'none';
-                link.href = url;
-                link.download = 'Inventurdaten' + (jahrSelect && jahrSelect.value && jahrSelect.value !== 'all' ? ('_' + jahrSelect.value) : '') + '.xlsx';
-                document.body.appendChild(link);
-                link.click();
-                window.URL.revokeObjectURL(url);
-                window.showToast('Export gestartet.', 'success');
+                window.setButtonLoading && window.setButtonLoading(exportButton, false);
+                var suffix = (jahrSelect && jahrSelect.value && jahrSelect.value !== 'all') ? ('_' + jahrSelect.value) : '';
+                triggerDownload(blob, 'Inventurdaten' + suffix + '.xlsx');
+                window.showToast('Export erfolgreich heruntergeladen.', 'success');
             })
-            .catch(function () { window.showToast('Export fehlgeschlagen.', 'error'); });
+            .catch(function () {
+                window.setButtonLoading && window.setButtonLoading(exportButton, false);
+                window.showToast('Export fehlgeschlagen.', 'error');
+            });
         });
     }
 
-    
 })();
 (function(){
-  // Delegation: Editieren / Löschen in der Tabelle
-  var container = document.querySelector('.section-card'); // oder exakter: die card-body
+  var container  = document.querySelector('.section-card');
+  var editModal  = document.getElementById('invEditModal');
+  var deleteModal = document.getElementById('invDeleteModal');
   if (!container) return;
 
   function getRowValues(tr){
     var tds = tr.querySelectorAll('td');
-    // Annahme Spalten: Jahr, Artikelname, Menge, Einheit, Preis, Gesamtpreis, Aktionen
     return {
-      jahr:       tds[0] && tds[0].textContent.trim(),
-      artikel:    tds[1] && tds[1].textContent.trim(),
-      menge:      tds[2] && tds[2].textContent.trim(),
-      einheit:    tds[3] && tds[3].textContent.trim(),
-      preis:      tds[4] && tds[4].textContent.trim(),
-      gesamt:     tds[5] && tds[5].textContent.trim()
+      artikel: tds[1] && tds[1].textContent.trim(),
+      menge:   tds[2] && tds[2].textContent.trim(),
+      einheit: tds[3] && tds[3].textContent.trim(),
+      preis:   tds[4] && tds[4].textContent.trim(),
     };
   }
 
@@ -224,54 +283,72 @@
     var id = (editBtn || delBtn).dataset.id;
     if (!id) return;
 
-    var tr = (editBtn || delBtn).closest('tr');
-    var cur = getRowValues(tr);
+    if (editBtn && editModal){
+      var cur = getRowValues(editBtn.closest('tr'));
+      document.getElementById('invEditId').value           = id;
+      document.getElementById('invEditArtikel').value      = cur.artikel;
+      document.getElementById('invEditEinheit').value      = cur.einheit;
+      document.getElementById('invEditMenge').value        = cur.menge.replace(',','.');
+      document.getElementById('invEditPreis').value        = cur.preis.replace(',','.');
+      $(editModal).modal('show');
+    }
 
-    if (editBtn){
-      var name = window.prompt('Artikelname:', cur.artikel); if (!name) return;
-      var unit = window.prompt('Einheit:', cur.einheit); if (!unit) return;
-      var menge = window.prompt('Menge:', String(cur.menge).replace(',', '.')); if (!menge) return;
-      var preis = window.prompt('Preis:', String(cur.preis).replace(',', '.')); if (preis==null) return;
+    if (delBtn && deleteModal){
+      document.getElementById('invDeleteId').value = id;
+      var artName = delBtn.closest('tr').querySelectorAll('td')[1];
+      document.getElementById('invDeleteArtName').textContent = artName ? artName.textContent.trim() : '';
+      $(deleteModal).modal('show');
+    }
+  });
 
+  // Edit speichern
+  var editSaveBtn = document.getElementById('invEditSaveBtn');
+  if (editSaveBtn) {
+    editSaveBtn.addEventListener('click', function(){
+      var id     = document.getElementById('invEditId').value;
+      var name   = document.getElementById('invEditArtikel').value.trim();
+      var einheit= document.getElementById('invEditEinheit').value.trim();
+      var menge  = document.getElementById('invEditMenge').value.trim();
+      var preis  = document.getElementById('invEditPreis').value.trim();
+      if (!name || !einheit || !menge) {
+        window.showToast && window.showToast('Bitte alle Felder ausfüllen.', 'error'); return;
+      }
+      window.setButtonLoading && window.setButtonLoading(editSaveBtn, true);
       fetch('/admin/inventur/update_row', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({
-          id: id,
-          artikelname: name.trim(),
-          einheit: unit.trim(),
-          menge: String(menge).trim(),
-          preis: String(preis).trim(),
-        })
+        body: JSON.stringify({ id: id, artikelname: name, einheit: einheit, menge: menge, preis: preis })
       })
       .then(window.handleJsonResponse)
       .then(function(res){
+        $(editModal).modal('hide');
         window.showToast && window.showToast(res.message || 'Aktualisiert.', 'success');
         setTimeout(function(){ window.location.reload(); }, 600);
       })
-      .catch(function(){ /* Fehler-Toast zentral */ });
-    }
+      .catch(function(){ window.setButtonLoading && window.setButtonLoading(editSaveBtn, false); });
+    });
+  }
 
-    if (delBtn){
-      if (!window.confirm('Diesen Eintrag wirklich löschen?')) return;
+  // Delete bestätigen
+  var deleteSaveBtn = document.getElementById('invDeleteConfirmBtn');
+  if (deleteSaveBtn) {
+    deleteSaveBtn.addEventListener('click', function(){
+      var id = document.getElementById('invDeleteId').value;
+      window.setButtonLoading && window.setButtonLoading(deleteSaveBtn, true);
       fetch('/admin/inventur/delete_row', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({
-          id: id,
-
-        })
-
-
+        body: JSON.stringify({ id: id })
       })
       .then(window.handleJsonResponse)
       .then(function(res){
+        $(deleteModal).modal('hide');
         window.showToast && window.showToast(res.message || 'Gelöscht.', 'success');
         setTimeout(function(){ window.location.reload(); }, 600);
       })
-      .catch(function(){ /* Fehler-Toast zentral */ });
-    }
-  });
+      .catch(function(){ window.setButtonLoading && window.setButtonLoading(deleteSaveBtn, false); });
+    });
+  }
 })();
 </script>
 <script>
@@ -302,32 +379,28 @@
         kst.forEach(function (val) { fd.append('kostenstellen[]', val); });
       }
 
+      window.setButtonLoading && window.setButtonLoading(exportFilteredBtn, true);
       fetch('/export_inventur_selection', { method: 'POST', body: fd })
         .then(function (res) {
           if (!res.ok) throw new Error('Export fehlgeschlagen');
           return res.blob();
         })
         .then(function (blob) {
+          window.setButtonLoading && window.setButtonLoading(exportFilteredBtn, false);
           var fn = 'Inventur_Export';
           if (jahr && jahr !== 'all') fn += '_' + jahr;
           var k = selectedKostenstellen();
-          if (Array.isArray(k) && k.length === 1) {
-            // Dateiname etwas sprechender
-            fn += '_' + k[0].replace(/\s+/g, '_');
-          }
+          if (Array.isArray(k) && k.length === 1) fn += '_' + k[0].replace(/\s+/g, '_');
           fn += '.xlsx';
-
           var url = window.URL.createObjectURL(blob);
           var a = document.createElement('a');
-          a.href = url;
-          a.download = fn;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
+          a.href = url; a.download = fn;
+          document.body.appendChild(a); a.click(); a.remove();
           window.URL.revokeObjectURL(url);
-          window.showToast && window.showToast('Export gestartet.', 'success');
+          window.showToast && window.showToast('Export erfolgreich heruntergeladen.', 'success');
         })
         .catch(function () {
+          window.setButtonLoading && window.setButtonLoading(exportFilteredBtn, false);
           window.showToast && window.showToast('Export fehlgeschlagen.', 'error');
         });
     });

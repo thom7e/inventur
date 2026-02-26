@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="de">
 <head>
     <script>document.documentElement.classList.add('js-enabled');</script>
@@ -11,36 +11,51 @@
     {% block extra_head %}{% endblock %}
 </head>
 <body>
-<nav class="navbar navbar-expand-lg navbar-light">
+
+<a href="#main-content" class="skip-link">Zum Inhalt springen</a>
+
+<nav class="navbar navbar-expand-lg navbar-light" role="navigation" aria-label="Hauptnavigation">
     <div class="container">
         <a class="navbar-brand" href="{{ url_for('index') }}">
-            <img src="{{ url_for('static', filename='imgs/logo.png') }}" alt="Logo" class="logo">
+            <img src="{{ url_for('static', filename='imgs/logo.png') }}" alt="Inventur – Startseite" class="logo">
         </a>
-        <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Navigation ein-/ausklappen">
+        <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav"
+                aria-controls="navbarNav" aria-expanded="false" aria-label="Navigation ein-/ausklappen">
             <span class="navbar-toggler-icon"></span>
         </button>
         <div class="collapse navbar-collapse" id="navbarNav">
             <ul class="navbar-nav ml-auto">
                 <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint == 'index' %}active{% endif %}" href="{{ url_for('index') }}">Inventur</a>
+                    <a class="nav-link {% if request.endpoint == 'index' %}active{% endif %}"
+                       href="{{ url_for('index') }}"
+                       {% if request.endpoint == 'index' %}aria-current="page"{% endif %}>Inventur</a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint in ('login', 'admin') %}active{% endif %}" href="{{ url_for('admin' if session.get('is_admin') else 'login') }}">Verwaltung Inventur</a>
+                    <a class="nav-link {% if request.endpoint == 'admin' %}active{% endif %}"
+                       href="{{ url_for('admin' if session.get('is_admin') else 'login') }}"
+                       {% if request.endpoint == 'admin' %}aria-current="page"{% endif %}>Verwaltung</a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint == 'uebersicht_inventur' %}active{% endif %}" href="{{ url_for('uebersicht_inventur') }}">Uebersicht Inventur</a>
+                    <a class="nav-link {% if request.endpoint == 'uebersicht_inventur' %}active{% endif %}"
+                       href="{{ url_for('uebersicht_inventur') }}"
+                       {% if request.endpoint == 'uebersicht_inventur' %}aria-current="page"{% endif %}>Übersicht</a>
                 </li>
+                {% if session.get('is_admin') %}
+                <li class="nav-item">
+                    <a class="nav-link" href="{{ url_for('logout') }}">Abmelden</a>
+                </li>
+                {% endif %}
             </ul>
         </div>
     </div>
 </nav>
 
-<div class="container">
+<main id="main-content" class="container">
     {% block page_header %}{% endblock %}
     {% block content %}{% endblock %}
-</div>
+</main>
 
-<div id="app-toast" class="toast" role="status" aria-live="polite" aria-atomic="true">
+<div id="app-toast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
     <span class="toast-message"></span>
 </div>
 
@@ -68,19 +83,30 @@
         };
     })();
 
+    // Button Loading-State Helfer
+    window.setButtonLoading = function (btn, loading) {
+        if (!btn) return;
+        if (loading) {
+            btn.classList.add('btn-loading');
+            btn.disabled = true;
+        } else {
+            btn.classList.remove('btn-loading');
+            btn.disabled = false;
+        }
+    };
+
     window.showToast = function(message, variant) {
         var toast = document.getElementById('app-toast');
-        if (!toast) {
-            return;
-        }
+        if (!toast) return;
         toast.classList.remove('toast-success', 'toast-error');
         toast.classList.add(variant === 'error' ? 'toast-error' : 'toast-success');
         toast.querySelector('.toast-message').textContent = message;
         toast.classList.add('show');
         clearTimeout(window.__toastTimer);
+        // Fehler 5s, Erfolg 3.5s sichtbar
         window.__toastTimer = setTimeout(function () {
             toast.classList.remove('show');
-        }, 3500);
+        }, variant === 'error' ? 5000 : 3500);
     };
 
     window.handleJsonResponse = async function(response) {

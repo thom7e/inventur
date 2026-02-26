@@ -53,7 +53,8 @@
         <h2 class="mb-0">Suchergebnisse</h2>
         <small class="text-muted" id="resultCount"></small>
     </div>
-    <div id="search-results" class="search-results">
+    <div id="search-results" class="search-results"
+         role="region" aria-live="polite" aria-label="Suchergebnisse">
         <p class="text-muted mb-0">Bitte mindestens zwei Zeichen eingeben.</p>
         <noscript>
             {% if results_payload %}
@@ -109,11 +110,38 @@
             {% endfor %}
           </select>
         </div>
-        <button type="submit" class="btn btn-custom btn-lg btn-block">In Inventur speichern</button>
+        <button type="submit" class="btn btn-custom btn-lg btn-block" id="saveToInventurSubmitBtn">
+          In Inventur speichern
+        </button>
       </form>
     </div>
   </div>
 </section>
+
+{# Modal: Inventur-Speicher-Bestätigung #}
+<div class="modal fade" id="saveConfirmModal" tabindex="-1"
+     aria-labelledby="saveConfirmModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="saveConfirmModalLabel">Inventur speichern – Bestätigung</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Schließen">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p>Folgende Positionen werden gespeichert:</p>
+                <ul id="saveConfirmList" class="small"></ul>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Abbrechen</button>
+                <button type="button" class="btn btn-custom" id="saveConfirmDoBtn">
+                    Jetzt speichern
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -289,10 +317,13 @@
             var mengeNum = Number(menge);
             if (!isFinite(mengeNum) || mengeNum <= 0) {
                 window.showToast && window.showToast('Bitte eine gültige Menge > 0 eingeben.', 'error');
+                if (qtyInput) { qtyInput.focus(); qtyInput.classList.add('is-invalid'); }
                 return;
             }
+            if (qtyInput) qtyInput.classList.remove('is-invalid');
 
             var body = new URLSearchParams({ artikelname: artikelname, menge: String(mengeNum) });
+            window.setButtonLoading && window.setButtonLoading(btn, true);
 
             toJson(fetch('/add_to_cart', {
                 method: 'POST',
@@ -300,11 +331,13 @@
                 body: body.toString()
             }))
             .then(function (data) {
+                window.setButtonLoading && window.setButtonLoading(btn, false);
                 cartState = data;
                 renderCart(cartState);
-                window.showToast && window.showToast('Artikel übernommen.', 'success');
+                window.showToast && window.showToast(artikelname + ' übernommen.', 'success');
             })
             .catch(function (err) {
+                window.setButtonLoading && window.setButtonLoading(btn, false);
                 console.error('add_to_cart error:', err);
                 window.showToast && window.showToast('Fehler beim Hinzufügen.', 'error');
             });
@@ -323,7 +356,12 @@
     }
 
 
-    var saveForm = document.getElementById('saveToInventurForm');
+    var saveForm       = document.getElementById('saveToInventurForm');
+    var saveSubmitBtn  = document.getElementById('saveToInventurSubmitBtn');
+    var confirmModal   = document.getElementById('saveConfirmModal');
+    var confirmList    = document.getElementById('saveConfirmList');
+    var confirmDoBtn   = document.getElementById('saveConfirmDoBtn');
+
     if (saveForm) {
         saveForm.addEventListener('submit', function (e) {
             e.preventDefault();
@@ -331,29 +369,48 @@
                 window.showToast && window.showToast('Der Warenkorb ist leer.', 'error');
                 return;
             }
-            // aktuelle Daten holen (falls Server-Seite rechnet)
+            // Inhalt im Modal anzeigen
             toJson(fetch('/get_cart'))
             .then(function (items) {
                 var list = Array.isArray(items) ? items : [];
-                var summary = list.map(function (it) {
-                    return it.artikelname + ' - Menge: ' + it.menge + ' | Gesamt: ' + formatCurrency(it.gesamtpreis);
-                }).join('\n');
-                var msg = 'Folgende Positionen werden gespeichert:\n\n' + summary;
-                if (!window.confirm(msg)) return;
-
-                return fetch('/save_to_inventur', { method: 'POST', body: new FormData(saveForm) });
-            })
-            .then(function (res) {
-                if (!res) return;
-                if (res.redirected) {
-                    window.location.href = res.url;
-                } else if (res.ok) {
-                    window.location.reload();
+                if (confirmList) {
+                    confirmList.innerHTML = list.map(function (it) {
+                        return '<li><strong>' + escapeHtml(it.artikelname) + '</strong>'
+                            + ' – Menge: ' + escapeHtml(String(it.menge))
+                            + ' | Gesamt: ' + formatCurrency(it.gesamtpreis) + ' €</li>';
+                    }).join('');
+                }
+                if (confirmModal && typeof $ !== 'undefined') {
+                    $(confirmModal).modal('show');
                 } else {
-                    window.showToast && window.showToast('Speichern fehlgeschlagen.', 'error');
+                    // Fallback: direkt speichern
+                    doSave();
                 }
             })
-            .catch(function () { window.showToast && window.showToast('Fehler beim Speichern.', 'error'); });
+            .catch(function () { window.showToast && window.showToast('Fehler beim Laden des Warenkorbs.', 'error'); });
+        });
+    }
+
+    function doSave() {
+        window.setButtonLoading && window.setButtonLoading(saveSubmitBtn, true);
+        window.setButtonLoading && window.setButtonLoading(confirmDoBtn, true);
+        fetch('/save_to_inventur', { method: 'POST', body: new FormData(saveForm) })
+        .then(function (res) {
+            if (res.redirected) { window.location.href = res.url; }
+            else if (res.ok) { window.location.reload(); }
+            else { window.showToast && window.showToast('Speichern fehlgeschlagen.', 'error'); }
+        })
+        .catch(function () {
+            window.setButtonLoading && window.setButtonLoading(saveSubmitBtn, false);
+            window.setButtonLoading && window.setButtonLoading(confirmDoBtn, false);
+            window.showToast && window.showToast('Fehler beim Speichern.', 'error');
+        });
+    }
+
+    if (confirmDoBtn) {
+        confirmDoBtn.addEventListener('click', function () {
+            if (confirmModal && typeof $ !== 'undefined') $(confirmModal).modal('hide');
+            doSave();
         });
     }
 

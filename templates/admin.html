@@ -1,4 +1,4 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}Inventur Verwaltung{% endblock %}
 
 {% block page_header %}
@@ -7,19 +7,28 @@
         <h1 class="main-title">Inventurverwaltung</h1>
         <p class="text-muted mb-0">Artikel pflegen, Preise anpassen und Jahreswechsel vorbereiten.</p>
     </div>
-    <button type="button" class="btn btn-custom" id="addArticleButton">Neuen Artikel hinzufügen</button>
+    <button type="button" class="btn btn-custom" id="addArticleButton"
+            data-toggle="modal" data-target="#addArticleModal">
+        Neuen Artikel hinzufügen
+    </button>
 </div>
 {% endblock %}
 
 {% block content %}
-<section class="section-card">
+<section class="section-card" aria-labelledby="settingsHeading">
+    <h2 id="settingsHeading" class="sr-only">Einstellungen</h2>
     <div class="row">
         <div class="col-lg-6 mb-4 mb-lg-0">
             <h2 class="h4">Preise per Faktor anpassen</h2>
-            <form id="priceFactorForm">
+            <form id="priceFactorForm" novalidate>
                 <div class="form-group">
-                    <label for="priceFactor">Faktor (z. B. 1.05 für +5&nbsp;%)</label>
-                    <input type="number" class="form-control form-control-lg" id="priceFactor" name="factor" step="0.001" min="0" required>
+                    <label for="priceFactor">Faktor (z.&nbsp;B. 1.05 für +5&nbsp;%)</label>
+                    <input type="number" class="form-control form-control-lg" id="priceFactor"
+                           name="factor" step="0.001" min="0.001" required
+                           aria-describedby="priceFactorHelp">
+                    <small id="priceFactorHelp" class="form-text text-muted">
+                        Wert &gt; 1 erhöht Preise, &lt; 1 senkt sie.
+                    </small>
                 </div>
                 <div class="form-group">
                     <label for="roundingPlaces">Nachkommastellen</label>
@@ -30,80 +39,93 @@
                         <option value="4">4</option>
                     </select>
                 </div>
-                <button type="submit" class="btn btn-custom btn-lg">Faktor anwenden</button>
+                <button type="submit" class="btn btn-custom btn-lg" id="priceFactorSubmitBtn">
+                    Faktor anwenden
+                </button>
             </form>
         </div>
         <div class="col-lg-6">
             <h2 class="h4">Jahresabschluss / Neue Kostenstellen</h2>
-                <form id="yearEndForm">
-                    <div class="form-group">
-                        <label for="yearEndYear">Jahr archivieren</label>
-                        <select class="form-control form-control-lg" id="yearEndYear" name="jahr" required>
-                            {% for y in closable_years %}
-                                <option value="{{ y }}" {{ 'selected' if y == active_inventur_year else '' }}>
-                                    {{ y }}{% if y == active_inventur_year %} (aktives Jahr){% endif %}
-                                </option>
-                            {% endfor %}
-                        </select>
-                        <small class="form-text text-muted">
-                            Aktives Inventurjahr: <strong>{{ active_inventur_year }}</strong>
-                        </small>
-                    </div>
-
-                    <div class="form-group" id="yearEndKstGroup">
-                        <label for="yearEndData">Neue Kostenstellen (nur fürs aktive Jahr; eine pro Zeile, Format: <code>Nummer;Bezeichnung</code>)</label>
-                        <textarea class="form-control" id="yearEndData" name="kostenstellen" rows="6"
-                                placeholder="1001;Bauhof&#10;1002;Fuhrpark"></textarea>
-                        <small class="form-text text-muted">Dieses Feld ist nur relevant, wenn das aktive Jahr archiviert wird.</small>
-                    </div>
-                    <button type="button" class="btn btn-secondary btn-lg mt-2" id="bulkAddCostCentersBtn">
-                        Kostenstellen aus Feld hinzufügen (mehrere)
-                    </button>
+            <form id="yearEndForm" novalidate>
+                <div class="form-group">
+                    <label for="yearEndYear">Jahr archivieren</label>
+                    <select class="form-control form-control-lg" id="yearEndYear" name="jahr" required>
+                        {% for y in closable_years %}
+                            <option value="{{ y }}" {{ 'selected' if y == active_inventur_year else '' }}>
+                                {{ y }}{% if y == active_inventur_year %} (aktives Jahr){% endif %}
+                            </option>
+                        {% endfor %}
+                    </select>
                     <small class="form-text text-muted">
-                        Fügt alle oben eingegebenen Kostenstellen zur aktiven Liste hinzu (ohne Jahresabschluss). Duplikate werden übersprungen.
+                        Aktives Inventurjahr: <strong>{{ active_inventur_year }}</strong>
                     </small>
-                    <button type="button" class="btn btn-secondary btn-lg mt-3" id="addCostCenterBtn">
-                        einzelne Kostenstelle hinzufügen
-                    </button>
-                    <small class="form-text text-muted">
-                        Fügt eine Kostenstelle zur aktuellen aktiven Liste hinzu (nicht zum Archiv).
-                    </small>
+                </div>
 
-                    <button type="submit" class="btn btn-custom btn-lg">Jahresabschluss durchführen</button>
-                </form>
-                <!-- unterhalb vom yearEndForm -->
-                <button type="button" class="btn btn-outline-danger btn-lg mt-3" id="clearCostCentersBtn">
-                    Kostenstellen leeren
-                </button>
-                <small class="form-text text-muted">
-                    Löscht die aktuelle Kostenstellenliste (nicht das Archiv). Passwort erforderlich.
-</small>
+                <div class="form-group" id="yearEndKstGroup">
+                    <label for="yearEndData">
+                        Neue Kostenstellen
+                        <small class="text-muted">(nur fürs aktive Jahr, Format: <code>Nummer;Bezeichnung</code>)</small>
+                    </label>
+                    <textarea class="form-control" id="yearEndData" name="kostenstellen" rows="5"
+                              placeholder="1001;Bauhof&#10;1002;Fuhrpark"
+                              aria-describedby="yearEndDataHelp"></textarea>
+                    <small id="yearEndDataHelp" class="form-text text-muted">
+                        Eine Kostenstelle pro Zeile. Nur erforderlich beim Abschluss des aktiven Jahres.
+                    </small>
+                </div>
+
+                <div class="d-flex flex-wrap gap-2 mt-2" style="gap: 0.5rem;">
+                    <button type="button" class="btn btn-outline-secondary" id="bulkAddCostCentersBtn"
+                            title="Alle Kostenstellen aus dem Textfeld hinzufügen (ohne Jahresabschluss)">
+                        Kostenstellen aus Feld übernehmen
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary" id="addCostCenterBtn"
+                            data-toggle="modal" data-target="#addCostCenterModal">
+                        Einzelne Kostenstelle hinzufügen
+                    </button>
+                </div>
+
+                <hr class="my-3">
+
+                <div class="d-flex flex-wrap align-items-center" style="gap: 0.75rem;">
+                    <button type="submit" class="btn btn-custom btn-lg" id="yearEndSubmitBtn">
+                        Jahresabschluss durchführen
+                    </button>
+                    <button type="button" class="btn btn-outline-danger" id="clearCostCentersBtn"
+                            data-toggle="modal" data-target="#clearCostCentersModal">
+                        Kostenstellen leeren
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 </section>
 
-<section class="section-card">
+<section class="section-card" aria-labelledby="articleTableHeading">
     <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4">
         <div class="mb-3 mb-md-0">
-            <h2 class="h4 mb-1">Artikelbestand</h2>
+            <h2 id="articleTableHeading" class="h4 mb-1">Artikelbestand</h2>
             <p class="text-muted small mb-0">Filtern und bearbeiten Sie Artikel direkt in der Tabelle.</p>
         </div>
         <div class="form-group mb-0 w-100 w-md-50">
-            <label class="sr-only" for="searchInput">Artikel suchen</label>
-            <input type="search" class="form-control form-control-lg" placeholder="Artikelname" id="searchInput">
+            <label class="sr-only" for="searchInput">Artikelname suchen</label>
+            <input type="search" class="form-control form-control-lg"
+                   placeholder="Artikel suchen …" id="searchInput"
+                   aria-label="Artikel nach Name suchen">
         </div>
     </div>
-    <div id="admin-search-results" class="admin-search-results mb-4">
+    <div id="admin-search-results" class="admin-search-results mb-4"
+         aria-live="polite" aria-label="Suchergebnisse">
         <p class="text-muted mb-0">Bitte mindestens zwei Zeichen eingeben.</p>
     </div>
     <div class="table-responsive">
-        <table class="table table-striped" id="articleTable">
+        <table class="table table-striped" id="articleTable" aria-label="Artikelliste">
             <thead>
                 <tr>
-                    <th>Artikelname</th>
-                    <th>Einheit</th>
-                    <th>Preis</th>
-                    <th class="text-right">Aktionen</th>
+                    <th scope="col">Artikelname</th>
+                    <th scope="col">Einheit</th>
+                    <th scope="col">Preis (€)</th>
+                    <th scope="col" class="text-right">Aktionen</th>
                 </tr>
             </thead>
             <tbody>
@@ -113,8 +135,16 @@
                     <td class="article-unit">{{ article.einheit }}</td>
                     <td class="article-price">{{ '%.2f' | format(article.preis) }}</td>
                     <td class="text-right">
-                        <button type="button" class="btn btn-sm btn-primary edit-article" data-artikel="{{ article.artikelname }}">Bearbeiten</button>
-                        <button type="button" class="btn btn-sm btn-danger delete-article" data-artikel="{{ article.artikelname }}">Löschen</button>
+                        <button type="button" class="btn btn-sm btn-primary edit-article"
+                                data-artikel="{{ article.artikelname }}"
+                                aria-label="Artikel {{ article.artikelname }} bearbeiten">
+                            Bearbeiten
+                        </button>
+                        <button type="button" class="btn btn-sm btn-danger delete-article"
+                                data-artikel="{{ article.artikelname }}"
+                                aria-label="Artikel {{ article.artikelname }} löschen">
+                            Löschen
+                        </button>
                     </td>
                 </tr>
                 {% endfor %}
@@ -122,479 +152,558 @@
         </table>
     </div>
 </section>
+
+{# -----------------------------------------------------------------------
+   Modals
+   ----------------------------------------------------------------------- #}
+
+{# Modal: Artikel hinzufügen #}
+<div class="modal fade" id="addArticleModal" tabindex="-1"
+     aria-labelledby="addArticleModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addArticleModalLabel">Neuen Artikel anlegen</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Schließen">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="modalAddName">Artikelname <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="modalAddName" maxlength="200" required>
+                    <div class="field-error d-none" id="modalAddNameError"></div>
+                </div>
+                <div class="form-group">
+                    <label for="modalAddUnit">Einheit <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="modalAddUnit" maxlength="50"
+                           placeholder="z. B. Stk, m², kg" required>
+                    <div class="field-error d-none" id="modalAddUnitError"></div>
+                </div>
+                <div class="form-group">
+                    <label for="modalAddPrice">Preis (€) <span class="text-danger">*</span></label>
+                    <input type="number" class="form-control" id="modalAddPrice"
+                           step="0.01" min="0" required>
+                    <div class="field-error d-none" id="modalAddPriceError"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Abbrechen</button>
+                <button type="button" class="btn btn-custom" id="addArticleSubmitBtn">
+                    Artikel speichern
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Modal: Artikel bearbeiten #}
+<div class="modal fade" id="editArticleModal" tabindex="-1"
+     aria-labelledby="editArticleModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editArticleModalLabel">Artikel bearbeiten</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Schließen">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editOriginalName">
+                <div class="form-group">
+                    <label for="editModalName">Artikelname <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="editModalName" maxlength="200" required>
+                </div>
+                <div class="form-group">
+                    <label for="editModalUnit">Einheit <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="editModalUnit" maxlength="50" required>
+                </div>
+                <div class="form-group">
+                    <label for="editModalPrice">Preis (€) <span class="text-danger">*</span></label>
+                    <input type="number" class="form-control" id="editModalPrice"
+                           step="0.01" min="0" required>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Abbrechen</button>
+                <button type="button" class="btn btn-custom" id="editArticleSubmitBtn">
+                    Änderungen speichern
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Modal: Artikel löschen #}
+<div class="modal fade" id="deleteArticleModal" tabindex="-1"
+     aria-labelledby="deleteArticleModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteArticleModalLabel">Artikel löschen</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Schließen">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p>Möchten Sie den Artikel <strong id="deleteArticleNameDisplay"></strong> wirklich löschen?</p>
+                <p class="text-muted small mb-0">Diese Aktion kann nicht rückgängig gemacht werden.</p>
+                <input type="hidden" id="deleteArticleNameHidden">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Abbrechen</button>
+                <button type="button" class="btn btn-danger" id="deleteArticleSubmitBtn">
+                    Endgültig löschen
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Modal: Einzelne Kostenstelle hinzufügen #}
+<div class="modal fade" id="addCostCenterModal" tabindex="-1"
+     aria-labelledby="addCostCenterModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addCostCenterModalLabel">Kostenstelle hinzufügen</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Schließen">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="ccModalNummer">Nummer <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="ccModalNummer" maxlength="50" required>
+                </div>
+                <div class="form-group">
+                    <label for="ccModalBezeichnung">Bezeichnung <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="ccModalBezeichnung" maxlength="200" required>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Abbrechen</button>
+                <button type="button" class="btn btn-custom" id="addCostCenterSubmitBtn">
+                    Kostenstelle speichern
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Modal: Kostenstellen leeren (Bestätigung) #}
+<div class="modal fade" id="clearCostCentersModal" tabindex="-1"
+     aria-labelledby="clearCostCentersModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="clearCostCentersModalLabel">Kostenstellen leeren</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Schließen">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning" role="alert">
+                    <strong>Achtung!</strong> Diese Aktion löscht <em>alle</em> aktiven Kostenstellen
+                    (nicht das Archiv) und kann nicht rückgängig gemacht werden.
+                </div>
+                <p>Sind Sie sicher, dass Sie fortfahren möchten?</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Abbrechen</button>
+                <button type="button" class="btn btn-danger" id="clearCostCentersSubmitBtn">
+                    Ja, alle leeren
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
-
-
 <script>
-    (function () {
-        var tableBody = document.querySelector('#articleTable tbody');
-        var searchInput = document.getElementById('searchInput');
-        var searchResults = document.getElementById('admin-search-results');
-        var addButton = document.getElementById('addArticleButton');
-        var priceFactorForm = document.getElementById('priceFactorForm');
-        var yearEndForm = document.getElementById('yearEndForm');
+(function () {
+    var tableBody = document.querySelector('#articleTable tbody');
+    var searchInput = document.getElementById('searchInput');
+    var searchResults = document.getElementById('admin-search-results');
+    var priceFactorForm = document.getElementById('priceFactorForm');
+    var yearEndForm = document.getElementById('yearEndForm');
 
-        function refreshPage(message) {
-            if (message) {
-                window.showToast(message, 'success');
+    function refreshPage(message) {
+        if (message) window.showToast(message, 'success');
+        setTimeout(function () { window.location.reload(); }, 700);
+    }
+
+    function formatCurrency(value) {
+        var numeric = Number(String(value).replace(',', '.'));
+        return Number.isNaN(numeric) ? '0.00' : numeric.toFixed(2);
+    }
+
+    // ---- Modal-Hilfsfunktionen ----
+    function showFieldError(inputEl, errorEl, message) {
+        inputEl.classList.add('is-invalid');
+        errorEl.textContent = message;
+        errorEl.classList.remove('d-none');
+    }
+    function clearFieldError(inputEl, errorEl) {
+        inputEl.classList.remove('is-invalid');
+        errorEl.classList.add('d-none');
+        errorEl.textContent = '';
+    }
+
+    // ---- Admin-Suche ----
+    function setAdminSearchMessage(msg) {
+        if (searchResults) searchResults.innerHTML = '<p class="text-muted mb-0">' + msg + '</p>';
+    }
+
+    function renderAdminResults(entries) {
+        if (!searchResults) return;
+        if (!entries.length) { setAdminSearchMessage('Keine Treffer gefunden.'); return; }
+        searchResults.innerHTML = '';
+        entries.forEach(function (entry) {
+            var card = document.createElement('div');
+            card.className = 'admin-result-card';
+            var header = document.createElement('div');
+            header.className = 'd-flex justify-content-between align-items-baseline';
+            var info = document.createElement('div');
+            var title = document.createElement('strong');
+            title.textContent = entry.artikelname;
+            var subtitle = document.createElement('div');
+            subtitle.className = 'text-muted small';
+            subtitle.textContent = 'Einheit: ' + entry.einheit + ' | Preis: ' + formatCurrency(entry.preis);
+            info.appendChild(title); info.appendChild(subtitle);
+            header.appendChild(info);
+            var actions = document.createElement('div');
+            actions.className = 'btn-group btn-group-sm';
+            var editBtn = document.createElement('button');
+            editBtn.type = 'button'; editBtn.className = 'btn btn-primary admin-result-action';
+            editBtn.dataset.action = 'edit'; editBtn.dataset.artikel = entry.artikelname;
+            editBtn.textContent = 'Bearbeiten';
+            var deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button'; deleteBtn.className = 'btn btn-danger admin-result-action';
+            deleteBtn.dataset.action = 'delete'; deleteBtn.dataset.artikel = entry.artikelname;
+            deleteBtn.textContent = 'Löschen';
+            actions.appendChild(editBtn); actions.appendChild(deleteBtn);
+            header.appendChild(actions); card.appendChild(header);
+            searchResults.appendChild(card);
+        });
+    }
+
+    function performAdminSearch(query) {
+        if (!tableBody) return;
+        var rows = Array.prototype.slice.call(tableBody.querySelectorAll('tr'));
+        if (!query || query.length < 2) {
+            rows.forEach(function (r) { r.style.display = ''; });
+            setAdminSearchMessage('Bitte mindestens zwei Zeichen eingeben.');
+            return;
+        }
+        var lower = query.toLowerCase(), matches = [];
+        rows.forEach(function (row) {
+            var nameEl = row.querySelector('.article-name');
+            var isMatch = nameEl && nameEl.textContent.toLowerCase().indexOf(lower) !== -1;
+            row.style.display = isMatch ? '' : 'none';
+            if (isMatch) matches.push({
+                artikelname: row.querySelector('.article-name').textContent.trim(),
+                einheit:     row.querySelector('.article-unit').textContent.trim(),
+                preis:       row.querySelector('.article-price').textContent.trim(),
+            });
+        });
+        renderAdminResults(matches);
+    }
+
+    if (searchResults) {
+        searchResults.addEventListener('click', function (ev) {
+            var btn = ev.target.closest('.admin-result-action');
+            if (!btn || !tableBody) return;
+            var artikel = btn.dataset.artikel;
+            var selector = btn.dataset.action === 'edit' ? '.edit-article' : '.delete-article';
+            var target = Array.prototype.find.call(tableBody.querySelectorAll(selector),
+                function (b) { return b.dataset.artikel === artikel; });
+            if (target) target.click();
+        });
+    }
+
+    if (searchInput) {
+        var debouncedSearch = (function () {
+            var t;
+            return function (v) { clearTimeout(t); t = setTimeout(function () { performAdminSearch(v); }, 220); };
+        })();
+        searchInput.addEventListener('input', function () { debouncedSearch(searchInput.value.trim()); });
+        if (searchInput.value.trim()) performAdminSearch(searchInput.value.trim());
+    }
+
+    // ---- Modal: Artikel hinzufügen ----
+    var addSubmitBtn = document.getElementById('addArticleSubmitBtn');
+    var addModal = document.getElementById('addArticleModal');
+
+    if (addModal) {
+        $(addModal).on('shown.bs.modal', function () {
+            document.getElementById('modalAddName').focus();
+        });
+        $(addModal).on('hidden.bs.modal', function () {
+            ['modalAddName','modalAddUnit','modalAddPrice'].forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el) { el.value = ''; el.classList.remove('is-invalid'); }
+            });
+            ['modalAddNameError','modalAddUnitError','modalAddPriceError'].forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el) { el.classList.add('d-none'); el.textContent = ''; }
+            });
+        });
+    }
+
+    if (addSubmitBtn) {
+        addSubmitBtn.addEventListener('click', function () {
+            var nameEl   = document.getElementById('modalAddName');
+            var unitEl   = document.getElementById('modalAddUnit');
+            var priceEl  = document.getElementById('modalAddPrice');
+            var nameErr  = document.getElementById('modalAddNameError');
+            var unitErr  = document.getElementById('modalAddUnitError');
+            var priceErr = document.getElementById('modalAddPriceError');
+
+            var valid = true;
+            [nameEl, unitEl, priceEl].forEach(function (el) { el.classList.remove('is-invalid'); });
+            [nameErr, unitErr, priceErr].forEach(function (el) { el.classList.add('d-none'); });
+
+            if (!nameEl.value.trim()) { showFieldError(nameEl, nameErr, 'Artikelname ist erforderlich.'); valid = false; }
+            if (!unitEl.value.trim()) { showFieldError(unitEl, unitErr, 'Einheit ist erforderlich.'); valid = false; }
+            var price = parseFloat(String(priceEl.value).replace(',', '.'));
+            if (isNaN(price) || price < 0) { showFieldError(priceEl, priceErr, 'Bitte einen gültigen Preis ≥ 0 eingeben.'); valid = false; }
+            if (!valid) return;
+
+            window.setButtonLoading(addSubmitBtn, true);
+            fetch('/add_article', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: nameEl.value.trim(), einheit: unitEl.value.trim(), preis: priceEl.value.trim() })
+            })
+            .then(window.handleJsonResponse)
+            .then(function (data) {
+                $(addModal).modal('hide');
+                refreshPage(data.message || 'Artikel hinzugefügt.');
+            })
+            .catch(function () { window.setButtonLoading(addSubmitBtn, false); });
+        });
+    }
+
+    // ---- Modal: Artikel bearbeiten ----
+    var editSubmitBtn = document.getElementById('editArticleSubmitBtn');
+    var editModal = document.getElementById('editArticleModal');
+
+    if (tableBody) {
+        tableBody.addEventListener('click', function (ev) {
+            var btn = ev.target.closest('.edit-article, .delete-article');
+            if (!btn) return;
+            var artikel = btn.dataset.artikel;
+            if (!artikel) return;
+
+            if (btn.classList.contains('edit-article')) {
+                var row = btn.closest('tr');
+                document.getElementById('editOriginalName').value = artikel;
+                document.getElementById('editModalName').value = row.querySelector('.article-name').textContent.trim();
+                document.getElementById('editModalUnit').value = row.querySelector('.article-unit').textContent.trim();
+                document.getElementById('editModalPrice').value = row.querySelector('.article-price').textContent.trim();
+                $(editModal).modal('show');
             }
-            setTimeout(function () {
-                window.location.reload();
-            }, 700);
-        }
 
-        function formatCurrency(value) {
-            var numeric = Number(String(value).replace(',', '.'));
-            if (Number.isNaN(numeric)) {
-                return '0.00';
+            if (btn.classList.contains('delete-article')) {
+                document.getElementById('deleteArticleNameDisplay').textContent = artikel;
+                document.getElementById('deleteArticleNameHidden').value = artikel;
+                $('#deleteArticleModal').modal('show');
             }
-            return numeric.toFixed(2);
-        }
+        });
+    }
 
-        function setAdminSearchMessage(message) {
-            if (!searchResults) {
-                return;
+    if (editSubmitBtn && editModal) {
+        editSubmitBtn.addEventListener('click', function () {
+            var origName  = document.getElementById('editOriginalName').value;
+            var newName   = document.getElementById('editModalName').value.trim();
+            var newUnit   = document.getElementById('editModalUnit').value.trim();
+            var newPrice  = document.getElementById('editModalPrice').value.trim();
+            if (!newName || !newUnit || !newPrice) {
+                window.showToast('Bitte alle Felder ausfüllen.', 'error'); return;
             }
-            searchResults.innerHTML = '<p class="text-muted mb-0">' + message + '</p>';
-        }
+            window.setButtonLoading(editSubmitBtn, true);
+            fetch('/update_article', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ originalArticleName: origName, newArticleName: newName, newUnit: newUnit, newPrice: newPrice })
+            })
+            .then(window.handleJsonResponse)
+            .then(function (data) {
+                $(editModal).modal('hide');
+                refreshPage(data.message || 'Artikel aktualisiert.');
+            })
+            .catch(function () { window.setButtonLoading(editSubmitBtn, false); });
+        });
+    }
 
-        function renderAdminResults(entries) {
-            if (!searchResults) {
-                return;
+    // ---- Modal: Artikel löschen ----
+    var deleteSubmitBtn = document.getElementById('deleteArticleSubmitBtn');
+    if (deleteSubmitBtn) {
+        deleteSubmitBtn.addEventListener('click', function () {
+            var artikel = document.getElementById('deleteArticleNameHidden').value;
+            window.setButtonLoading(deleteSubmitBtn, true);
+            fetch('/delete_article', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ articleName: artikel })
+            })
+            .then(window.handleJsonResponse)
+            .then(function (data) {
+                $('#deleteArticleModal').modal('hide');
+                refreshPage(data.message || 'Artikel gelöscht.');
+            })
+            .catch(function () { window.setButtonLoading(deleteSubmitBtn, false); });
+        });
+    }
+
+    // ---- Preis-Faktor ----
+    var priceFactorSubmitBtn = document.getElementById('priceFactorSubmitBtn');
+    if (priceFactorForm) {
+        priceFactorForm.addEventListener('submit', function (ev) {
+            ev.preventDefault();
+            var factor = document.getElementById('priceFactor').value;
+            var rounding = document.getElementById('roundingPlaces').value;
+            if (!factor || parseFloat(factor) <= 0) {
+                window.showToast('Bitte einen gültigen Faktor > 0 eingeben.', 'error'); return;
             }
-            if (!entries.length) {
-                setAdminSearchMessage('Keine Treffer gefunden.');
-                return;
-            }
-            searchResults.innerHTML = '';
-            entries.forEach(function (entry) {
-                var card = document.createElement('div');
-                card.className = 'admin-result-card';
+            window.setButtonLoading(priceFactorSubmitBtn, true);
+            fetch('/admin/apply_price_factor', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ factor: factor, rounding_places: rounding })
+            })
+            .then(window.handleJsonResponse)
+            .then(function (data) { refreshPage(data.message || 'Faktor angewendet.'); })
+            .catch(function () { window.setButtonLoading(priceFactorSubmitBtn, false); });
+        });
+    }
 
-                var header = document.createElement('div');
-                header.className = 'd-flex justify-content-between align-items-baseline';
+    // ---- Jahresabschluss ----
+    var yearEndSubmitBtn = document.getElementById('yearEndSubmitBtn');
+    var yearEndYearSel   = document.getElementById('yearEndYear');
+    var yearEndData      = document.getElementById('yearEndData');
+    var yearEndKstGroup  = document.getElementById('yearEndKstGroup');
+    var ACTIVE_YEAR      = {{ active_inventur_year|int }};
 
-                var info = document.createElement('div');
-                var title = document.createElement('strong');
-                title.textContent = entry.artikelname;
-                var subtitle = document.createElement('div');
-                subtitle.className = 'text-muted small';
-                subtitle.textContent = 'Einheit: ' + entry.einheit + ' | Preis: ' + formatCurrency(entry.preis);
-                info.appendChild(title);
-                info.appendChild(subtitle);
-                header.appendChild(info);
+    function syncKstField() {
+        var y = parseInt(yearEndYearSel.value, 10);
+        var isActive = (y === ACTIVE_YEAR);
+        yearEndData.disabled = !isActive;
+        yearEndData.required = isActive;
+        yearEndKstGroup.style.opacity = isActive ? '1' : '0.5';
+    }
+    if (yearEndYearSel && yearEndData) {
+        syncKstField();
+        yearEndYearSel.addEventListener('change', syncKstField);
+    }
 
-                var actions = document.createElement('div');
-                actions.className = 'btn-group btn-group-sm';
-
-                var editBtn = document.createElement('button');
-                editBtn.type = 'button';
-                editBtn.className = 'btn btn-primary admin-result-action';
-                editBtn.dataset.action = 'edit';
-                editBtn.dataset.artikel = entry.artikelname;
-                editBtn.textContent = 'Bearbeiten';
-
-                var deleteBtn = document.createElement('button');
-                deleteBtn.type = 'button';
-                deleteBtn.className = 'btn btn-danger admin-result-action';
-                deleteBtn.dataset.action = 'delete';
-                deleteBtn.dataset.artikel = entry.artikelname;
-                deleteBtn.textContent = 'Löschen';
-
-                actions.appendChild(editBtn);
-                actions.appendChild(deleteBtn);
-                header.appendChild(actions);
-
-                card.appendChild(header);
-                searchResults.appendChild(card);
+    function parseKostenstellenText(text) {
+        return String(text || '').split(/\r?\n/)
+            .map(function (l) { return l.trim(); })
+            .filter(Boolean)
+            .map(function (line) {
+                var parts = line.split(';');
+                if (parts.length < 2) throw new Error('Ungültiges Format in Zeile: ' + line);
+                return { nummer: parts[0].trim(), bezeichnung: parts.slice(1).join(';').trim() };
             });
-        }
+    }
 
-        function getRowSnapshot(row) {
-            var nameCell = row.querySelector('.article-name');
-            var unitCell = row.querySelector('.article-unit');
-            var priceCell = row.querySelector('.article-price');
-            return {
-                artikelname: nameCell ? nameCell.textContent.trim() : '',
-                einheit: unitCell ? unitCell.textContent.trim() : '',
-                preis: priceCell ? priceCell.textContent.trim() : ''
-            };
-        }
+    if (yearEndForm) {
+        yearEndForm.addEventListener('submit', function (ev) {
+            ev.preventDefault();
+            var jahr = yearEndYearSel.value;
+            var kostenstellen;
+            try { kostenstellen = parseKostenstellenText(yearEndData.value); }
+            catch (err) { window.showToast(err.message, 'error'); return; }
 
-        function performAdminSearch(query) {
-            if (!tableBody) {
-                return;
-            }
-            var rows = Array.prototype.slice.call(tableBody.querySelectorAll('tr'));
-            if (!query || query.length < 2) {
-                rows.forEach(function (row) {
-                    row.style.display = '';
-                });
-                setAdminSearchMessage('Bitte mindestens zwei Zeichen eingeben.');
-                return;
-            }
+            window.setButtonLoading(yearEndSubmitBtn, true);
+            fetch('/admin/year_end', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jahr: jahr, kostenstellen: kostenstellen })
+            })
+            .then(window.handleJsonResponse)
+            .then(function (data) { refreshPage(data.message || 'Jahresabschluss durchgeführt.'); })
+            .catch(function () { window.setButtonLoading(yearEndSubmitBtn, false); });
+        });
+    }
 
-            var lower = query.toLowerCase();
-            var matches = [];
-            rows.forEach(function (row) {
-                var snapshot = getRowSnapshot(row);
-                var isMatch = snapshot.artikelname.toLowerCase().indexOf(lower) !== -1;
-                row.style.display = isMatch ? '' : 'none';
-                if (isMatch) {
-                    matches.push(snapshot);
-                }
-            });
-            renderAdminResults(matches);
-        }
+    // ---- Modal: Kostenstellen leeren ----
+    var clearSubmitBtn = document.getElementById('clearCostCentersSubmitBtn');
+    if (clearSubmitBtn) {
+        clearSubmitBtn.addEventListener('click', function () {
+            window.setButtonLoading(clearSubmitBtn, true);
+            fetch('/admin/clear_cost_centers', { method: 'POST' })
+            .then(window.handleJsonResponse)
+            .then(function (data) {
+                $('#clearCostCentersModal').modal('hide');
+                window.showToast(data.message || 'Kostenstellen geleert.', 'success');
+                setTimeout(function () { window.location.reload(); }, 900);
+            })
+            .catch(function () { window.setButtonLoading(clearSubmitBtn, false); });
+        });
+    }
 
-        if (searchResults) {
-            searchResults.addEventListener('click', function (event) {
-                var actionButton = event.target.closest('.admin-result-action');
-                if (!actionButton || !tableBody) {
-                    return;
-                }
-                var artikel = actionButton.dataset.artikel;
-                if (!artikel) {
-                    return;
-                }
-                var buttons = tableBody.querySelectorAll(actionButton.dataset.action === 'edit' ? '.edit-article' : '.delete-article');
-                var targetButton = Array.prototype.find.call(buttons, function (btn) {
-                    return btn.dataset.artikel === artikel;
-                });
-                if (targetButton) {
-                    targetButton.click();
-                }
-            });
-        }
+    // ---- Modal: Einzelne Kostenstelle ----
+    var ccSubmitBtn = document.getElementById('addCostCenterSubmitBtn');
+    var ccModal     = document.getElementById('addCostCenterModal');
+    if (ccSubmitBtn && ccModal) {
+        $(ccModal).on('hidden.bs.modal', function () {
+            document.getElementById('ccModalNummer').value = '';
+            document.getElementById('ccModalBezeichnung').value = '';
+        });
+        ccSubmitBtn.addEventListener('click', function () {
+            var nummer = document.getElementById('ccModalNummer').value.trim();
+            var bez    = document.getElementById('ccModalBezeichnung').value.trim();
+            if (!nummer || !bez) { window.showToast('Nummer und Bezeichnung sind erforderlich.', 'error'); return; }
+            window.setButtonLoading(ccSubmitBtn, true);
+            fetch('/admin/add_cost_center', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nummer: nummer, bezeichnung: bez })
+            })
+            .then(window.handleJsonResponse)
+            .then(function (data) {
+                $(ccModal).modal('hide');
+                window.showToast(data.message || 'Kostenstelle hinzugefügt.', 'success');
+                setTimeout(function () { window.location.reload(); }, 700);
+            })
+            .catch(function () { window.setButtonLoading(ccSubmitBtn, false); });
+        });
+    }
 
-        if (tableBody) {
-            tableBody.addEventListener('click', function (event) {
-                var button = event.target.closest('.delete-article, .edit-article');
-                if (!button || !tableBody.contains(button)) {
-                    return;
-                }
+    // ---- Bulk-Add Kostenstellen ----
+    var bulkBtn = document.getElementById('bulkAddCostCentersBtn');
+    if (bulkBtn) {
+        bulkBtn.addEventListener('click', function () {
+            var raw = (yearEndData && yearEndData.value) || '';
+            if (!raw.trim()) { window.showToast('Bitte Einträge im Textfeld hinterlegen.', 'error'); return; }
+            var entries;
+            try { entries = parseKostenstellenText(raw); }
+            catch (err) { window.showToast(err.message || 'Ungültiges Format.', 'error'); return; }
+            window.setButtonLoading(bulkBtn, true);
+            fetch('/admin/bulk_add_cost_centers', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ kostenstellen: entries })
+            })
+            .then(window.handleJsonResponse)
+            .then(function (data) {
+                window.showToast(data.message || 'Kostenstellen übernommen.', 'success');
+                setTimeout(function () { window.location.reload(); }, 700);
+            })
+            .catch(function () { window.setButtonLoading(bulkBtn, false); });
+        });
+    }
 
-                var artikel = button.dataset.artikel;
-                if (!artikel) {
-                    return;
-                }
-
-                if (button.classList.contains('delete-article')) {
-                    if (!window.confirm('Artikel "' + artikel + '" wirklich löschen?')) {
-                        return;
-                    }
-                    fetch('/delete_article', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ articleName: artikel })
-                    })
-                    .then(window.handleJsonResponse)
-                    .then(function (data) {
-                        refreshPage(data.message || 'Artikel gelöscht.');
-                    })
-                    .catch(function () {
-                        /* Fehlertoast bereits gesetzt */
-                    });
-                }
-
-                if (button.classList.contains('edit-article')) {
-                    var currentRow = button.closest('tr');
-                    var currentName = currentRow.querySelector('.article-name').textContent.trim();
-                    var currentUnit = currentRow.querySelector('.article-unit').textContent.trim();
-                    var currentPrice = currentRow.querySelector('.article-price').textContent.trim();
-
-                    var newName = window.prompt('Neuer Artikelname:', currentName) || '';
-                    if (!newName.trim()) {
-                        return;
-                    }
-                    var newUnit = window.prompt('Neue Einheit:', currentUnit) || '';
-                    if (!newUnit.trim()) {
-                        return;
-                    }
-                    var newPrice = window.prompt('Neuer Preis:', currentPrice.replace(',', '.')) || '';
-                    if (!newPrice.trim()) {
-                        return;
-                    }
-
-                    fetch('/update_article', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            originalArticleName: artikel,
-                            newArticleName: newName.trim(),
-                            newUnit: newUnit.trim(),
-                            newPrice: newPrice.trim()
-                        })
-                    })
-                    .then(window.handleJsonResponse)
-                    .then(function (data) {
-                        refreshPage(data.message || 'Artikel aktualisiert.');
-                    })
-                    .catch(function () {
-                        /* Fehlertoast bereits gesetzt */
-                    });
-                }
-            });
-        }
-
-        if (addButton) {
-            addButton.addEventListener('click', function () {
-                var name = window.prompt('Artikelname:');
-                if (!name || !name.trim()) {
-                    return;
-                }
-                var unit = window.prompt('Einheit:');
-                if (!unit || !unit.trim()) {
-                    return;
-                }
-                var price = window.prompt('Preis:', '0.00');
-                if (!price || !price.trim()) {
-                    return;
-                }
-
-                fetch('/add_article', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        name: name.trim(),
-                        einheit: unit.trim(),
-                        preis: price.trim()
-                    })
-                })
-                .then(window.handleJsonResponse)
-                .then(function (data) {
-                    refreshPage(data.message || 'Artikel hinzugefügt.');
-                })
-                .catch(function () {
-                    /* Fehlertoast bereits gesetzt */
-                });
-            });
-        }
-
-        if (searchInput) {
-            var debouncedAdminSearch = (function () {
-                var timer;
-                return function (value) {
-                    clearTimeout(timer);
-                    timer = setTimeout(function () {
-                        performAdminSearch(value);
-                    }, 220);
-                };
-            })();
-
-            searchInput.addEventListener('input', function () {
-                debouncedAdminSearch(searchInput.value.trim());
-            });
-
-            if (searchInput.value.trim()) {
-                performAdminSearch(searchInput.value.trim());
-            }
-        }
-
-        if (priceFactorForm) {
-            priceFactorForm.addEventListener('submit', function (event) {
-                event.preventDefault();
-                var factorValue = document.getElementById('priceFactor').value;
-                var rounding = document.getElementById('roundingPlaces').value;
-
-                fetch('/admin/apply_price_factor', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ factor: factorValue, rounding_places: rounding })
-                })
-                .then(window.handleJsonResponse)
-                .then(function (data) {
-                    refreshPage(data.message || 'Faktor angewendet.');
-                })
-                .catch(function () {
-                    /* Fehlertoast bereits gesetzt */
-                });
-            });
-        }
-
-        function parseKostenstellenText(text) {
-            return String(text || '')
-                .split(/\r?\n/)                    // korrekte Zeilenaufspaltung
-                .map(function (line) { return line.trim(); })
-                .filter(Boolean)
-                .map(function (line) {
-                    var parts = line.split(';');
-                    if (parts.length < 2) {
-                        throw new Error('Ungültiges Format in Zeile: ' + line);
-                    }
-                    return {
-                        nummer: parts[0].trim(),
-                        bezeichnung: parts.slice(1).join(';').trim()
-                    };
-                });
-        }
-
-        if (yearEndForm) {
-            yearEndForm.addEventListener('submit', function (event) {
-                event.preventDefault();
-                var jahr = document.getElementById('yearEndYear').value;
-                var rawText = document.getElementById('yearEndData').value;
-
-                var kostenstellen;
-                try {
-                    kostenstellen = parseKostenstellenText(rawText);
-                } catch (error) {
-                    window.showToast(error.message, 'error');
-                    return;
-                }
-
-                fetch('/admin/year_end', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ jahr: jahr, kostenstellen: kostenstellen })
-                })
-                .then(window.handleJsonResponse)
-                .then(function (data) {
-                    refreshPage(data.message || 'Jahresabschluss durchgeführt.');
-                })
-                .catch(function () {
-                    /* Fehlertoast bereits gesetzt */
-                });
-            });
-        }
-        // ---- Year-End: KSt-Feld nur fürs aktive Jahr zulassen ----
-        var yearEndYearSel = document.getElementById('yearEndYear');
-        var yearEndData = document.getElementById('yearEndData');
-        var yearEndKstGroup = document.getElementById('yearEndKstGroup');
-        var ACTIVE_YEAR = {{ active_inventur_year|int }};
-
-        function syncKstField() {
-            var y = parseInt(yearEndYearSel.value, 10);
-            var isActive = (y === ACTIVE_YEAR);
-            yearEndData.disabled = !isActive;
-            yearEndData.required = isActive;
-            yearEndKstGroup.style.opacity = isActive ? '1' : '0.5';
-        }
-        if (yearEndYearSel && yearEndData) {
-            syncKstField();
-            yearEndYearSel.addEventListener('change', syncKstField);
-        }
-
-        // im yearEndForm-Submit bleibt dein existierender Code – er schickt die Daten zum Backend.
-        // Das Backend lehnt "kostenstellen" ab, wenn jahr != active year (s. perform_year_end).
-
-        // ---- Kostenstellen leeren (mit Passwortabfrage) ----
-        var clearBtn = document.getElementById('clearCostCentersBtn');
-        if (clearBtn) {
-            clearBtn.addEventListener('click', function () {
-                var pwd = window.prompt('Bitte Admin-Passwort eingeben, um ALLE Kostenstellen zu löschen:');
-                if (!pwd) return;
-                if (!window.confirm('Sicher? Diese Aktion kann nicht rückgängig gemacht werden.')) return;
-
-                fetch('/admin/clear_cost_centers', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ password: pwd })
-                })
-                .then(window.handleJsonResponse)
-                .then(function (data) {
-                    window.showToast(data.message || 'Kostenstellen geleert.', 'success');
-                    setTimeout(function () { window.location.reload(); }, 700);
-                })
-                .catch(function () {
-                    /* Fehlertoast wird bereits zentral gehandhabt */
-                });
-            });
-        }
-        // ---- Einzelne Kostenstelle hinzufügen ----
-        var addCcBtn = document.getElementById('addCostCenterBtn');
-        if (addCcBtn) {
-            addCcBtn.addEventListener('click', function () {
-                var nummer = window.prompt('Kostenstellen-Nummer:');
-                if (!nummer || !nummer.trim()) return;
-
-                var bezeichnung = window.prompt('Bezeichnung:');
-                if (!bezeichnung || !bezeichnung.trim()) return;
-
-                fetch('/admin/add_cost_center', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        nummer: nummer.trim(),
-                        bezeichnung: bezeichnung.trim()
-                    })
-                })
-                .then(window.handleJsonResponse)
-                .then(function (data) {
-                    window.showToast(data.message || 'Kostenstelle hinzugefügt.', 'success');
-                    setTimeout(function(){ window.location.reload(); }, 700);
-                })
-                .catch(function(){
-                    /* Fehlertoast wird zentral gehandhabt */
-                });
-            });
-        }
-
-        // ---- Bulk-Add: Kostenstellen aus Textfeld übernehmen (ohne Jahresabschluss) ----
-        var bulkBtn = document.getElementById('bulkAddCostCentersBtn');
-        if (bulkBtn) {
-            bulkBtn.addEventListener('click', function () {
-                var txtEl = document.getElementById('yearEndData');
-                if (!txtEl) {
-                    window.showToast && window.showToast('Textfeld nicht gefunden.', 'error');
-                    return;
-                }
-                var raw = txtEl.value || '';
-                if (!raw.trim()) {
-                    window.showToast && window.showToast('Bitte Einträge im Feld hinterlegen.', 'error');
-                    return;
-                }
-
-                var entries;
-                try {
-                    entries = parseKostenstellenText(raw); // nutzt deine bestehende Funktion
-                } catch (err) {
-                    window.showToast && window.showToast(err.message || 'Ungültiges Format.', 'error');
-                    return;
-                }
-
-                fetch('/admin/bulk_add_cost_centers', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ kostenstellen: entries })
-                })
-                .then(window.handleJsonResponse)
-                .then(function (data) {
-                    window.showToast && window.showToast(data.message || 'Kostenstellen übernommen.', 'success');
-                    setTimeout(function(){ window.location.reload(); }, 700);
-                })
-                .catch(function () {
-                    /* Fehlertoast wird zentral gehandhabt */
-                });
-            });
-        }
-
-
-
-    })();
+})();
 </script>
 
-<form id="adminSearchForm" method="post" action="{{ url_for('admin_search') }}" autocomplete="off">
-    <input type="text" name="search_query" id="search_query" class="form-control" placeholder="Artikel suchen">
+<form id="adminSearchForm" method="post" action="{{ url_for('admin_search') }}" autocomplete="off" class="d-none">
+    <input type="text" name="search_query" id="search_query_hidden">
 </form>
-
-<div id="admin-search-results" class="search-results">
-    <!-- Ergebnisse landen hier -->
-</div>
-
 <script src="{{ url_for('static', filename='admin_search.js') }}"></script>
-
 {% endblock %}
-

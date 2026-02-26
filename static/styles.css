@@ -363,3 +363,124 @@ select:focus {
     position: relative;
     margin: 0 0 1.25rem 0;
 }
+
+/* -----------------------------------------------------------------------
+   Accessibility: Skip-Link
+   ----------------------------------------------------------------------- */
+.skip-link {
+    position: absolute;
+    top: -100%;
+    left: 0;
+    background: var(--secondary-color);
+    color: #fff;
+    padding: 0.5rem 1.1rem;
+    z-index: 9999;
+    border-radius: 0 0 0.5rem 0;
+    font-weight: 500;
+    text-decoration: none;
+    transition: top 0.15s ease;
+}
+.skip-link:focus {
+    top: 0;
+}
+
+/* -----------------------------------------------------------------------
+   Focus-visible: Klarer Fokus-Ring für Tastatur-Navigation
+   ----------------------------------------------------------------------- */
+:focus-visible {
+    outline: 2px solid var(--secondary-color);
+    outline-offset: 2px;
+}
+button:not(:focus-visible),
+a:not(:focus-visible) {
+    outline: none;
+}
+
+/* -----------------------------------------------------------------------
+   Loading-State für Buttons
+   ----------------------------------------------------------------------- */
+.btn-loading {
+    position: relative;
+    pointer-events: none;
+    opacity: 0.72;
+}
+.btn-loading::after {
+    content: '';
+    display: inline-block;
+    width: 0.9em;
+    height: 0.9em;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: btn-spin 0.65s linear infinite;
+    margin-left: 0.5em;
+    vertical-align: -0.12em;
+}
+@keyframes btn-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* -----------------------------------------------------------------------
+   Firefox Scrollbar-Styling
+   ----------------------------------------------------------------------- */
+.search-results,
+.admin-search-results {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(2, 40, 86, 0.3) rgba(2, 40, 86, 0.08);
+}
+
+/* -----------------------------------------------------------------------
+   Inline-Fehlermeldung bei Formularfeldern
+   ----------------------------------------------------------------------- */
+.field-error {
+    color: var(--danger-color);
+    font-size: 0.82rem;
+    margin-top: 0.3rem;
+}
+.form-control.is-invalid {
+    border-color: var(--danger-color);
+    box-shadow: 0 0 0 3px rgba(192, 57, 43, 0.12);
+}
+
+/* -----------------------------------------------------------------------
+   Modal-Verbesserungen (Bootstrap 4 override)
+   ----------------------------------------------------------------------- */
+.modal-header {
+    background-color: var(--secondary-color);
+    color: #fff;
+    border-radius: 0.5rem 0.5rem 0 0;
+}
+.modal-header .modal-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+.modal-header .close {
+    color: #fff;
+    opacity: 0.85;
+    text-shadow: none;
+}
+.modal-header .close:hover {
+    opacity: 1;
+}
+.modal-content {
+    border: none;
+    border-radius: 0.75rem;
+    box-shadow: 0 20px 60px rgba(2, 40, 86, 0.2);
+}
+.modal-footer {
+    border-top: 1px solid var(--border-color);
+}
+
+/* -----------------------------------------------------------------------
+   Kostenstellen-Status-Badge
+   ----------------------------------------------------------------------- */
+.badge-aktiv {
+    background-color: var(--success-color);
+    color: #fff;
+    border-radius: 999px;
+    padding: 0.15rem 0.6rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    vertical-align: middle;
+    margin-left: 0.4rem;
+}
