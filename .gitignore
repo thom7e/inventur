@@ -1,9 +1,9 @@
-# Byte-compiled / optimized / DLL files
+# ── Byte-compiled / optimized ─────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Virtual environments
+# ── Virtuelle Umgebungen ───────────────────────────────────────────────────────
 .venv/
 venv/
 env/
@@ -11,7 +11,7 @@ ENV/
 .venv*/
 pip-wheel-metadata/
 
-# SQLite databases & backups
+# ── SQLite-Datenbanken & Backups ───────────────────────────────────────────────
 *.db
 *.db-*
 *.sqlite
@@ -19,38 +19,57 @@ pip-wheel-metadata/
 *.bak
 *.backup
 
-# Local data / exports
+# ── Secrets / Konfiguration ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+secrets.txt
+*.pem
+*.key
+*.crt
+
+# ── Lokale Daten / Exporte ─────────────────────────────────────────────────────
 *.xlsx
 *.xls
 exports/
 *.csv
+uploads/
 
-# OS-specific
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Flask / Werkzeug ──────────────────────────────────────────────────────────
+instance/
+.webassets-cache
+
+# ── OS-spezifisch ─────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 ehthumbs.db
 Icon?
+desktop.ini
 
-# IDE / Editor
+# ── IDEs / Editoren ───────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-project
+*.sublime-workspace
 
-# Flask / instance
-instance/
-*.log
-
-# PyInstaller
+# ── Build / Distribution ──────────────────────────────────────────────────────
 *.manifest
 *.spec
 build/
 dist/
+*.egg-info/
 
-# Unit test / coverage
+# ── Tests / Coverage ──────────────────────────────────────────────────────────
 htmlcov/
 .tox/
 .nox/
-.coverage*
+.coverage
+.coverage.*
 .cache
 pytest_cache/
