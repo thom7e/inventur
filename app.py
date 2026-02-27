@@ -241,6 +241,36 @@ def ensure_app_meta_table() -> None:
         )
         conn.commit()
 
+def ensure_kostenstellen_table() -> None:
+    with db_connection(COST_CENTER_DB) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS kostenstellen (
+                kostenstellen_nummer      TEXT NOT NULL,
+                kostenstellen_bezeichnung TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+
+
+def ensure_inventur_table() -> None:
+    with db_connection(COST_CENTER_DB) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS inventur (
+                kostenstelle TEXT NOT NULL,
+                jahr         INTEGER NOT NULL,
+                artikelname  TEXT NOT NULL,
+                einheit      TEXT NOT NULL,
+                menge        TEXT NOT NULL,
+                preis        TEXT NOT NULL,
+                gesamtpreis  TEXT NOT NULL
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_inventur_jahr ON inventur(jahr)"
+        )
+        conn.commit()
+
+
 def ensure_cost_center_unique_index():
     with db_connection(COST_CENTER_DB) as conn:
         conn.execute("""
@@ -529,6 +559,8 @@ ADMIN_PASSWORD_HASH = _admin_password_hash
 
 def _bootstrap() -> None:
     try:
+        ensure_kostenstellen_table()
+        ensure_inventur_table()
         ensure_cart_table()
         ensure_cost_center_archive_table()
         ensure_app_meta_table()
