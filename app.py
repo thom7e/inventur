@@ -2,6 +2,8 @@ import io
 import os
 import re
 import secrets
+import time
+from urllib.parse import urlencode
 from datetime import datetime, timedelta, timezone
 import sqlite3
 import logging
@@ -11,6 +13,7 @@ from uuid import uuid4
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import openpyxl
+import requests
 from flask import (
     Flask,
     g,
@@ -287,11 +290,20 @@ def article_rows_to_payload(rows):
 
 
 def fetch_kostenstellen():
+    nc_rows = fetch_nc_kostenstellen()
+    if nc_rows is not None:
+        return [{"kostenstellen_nummer": n, "kostenstellen_bezeichnung": b} for n, b in nc_rows]
     with db_connection(COST_CENTER_DB) as conn:
-        rows = conn.execute(
+        return conn.execute(
             "SELECT kostenstellen_nummer, kostenstellen_bezeichnung FROM kostenstellen ORDER BY kostenstellen_nummer"
         ).fetchall()
-    return rows
+
+
+def find_kostenstelle(nummer):
+    for row in fetch_kostenstellen():
+        if row["kostenstellen_nummer"] == nummer:
+            return {"kostenstellen_bezeichnung": row["kostenstellen_bezeichnung"]}
+    return None
 
 
 def fetch_cart_items(cart_token: str):
@@ -524,7 +536,7 @@ def enforce_csrf():
 
 
 def audit_log(action: str, details: str = '') -> None:
-    user = 'admin' if session.get('is_admin') else 'anonym'
+    user = session.get('nc_user') or ('admin' if session.get('is_admin') else 'anonym')
     logger.info("AUDIT | %s | %s | %s", user, action, details)
     try:
         with db_connection(COST_CENTER_DB) as conn:
@@ -545,11 +557,117 @@ def audit_admin_actions(response):
     return response
 
 
+# ---------------------------------------------------------------------------
+# Nextcloud-Login (OAuth2) und Kostenstellen aus dem Urlaubsplaner
+# ---------------------------------------------------------------------------
+
+NC_BASE_URL = os.getenv("NC_BASE_URL", "").rstrip("/")
+NC_CLIENT_ID = os.getenv("NEXTCLOUD_CLIENT_ID", "")
+NC_CLIENT_SECRET = os.getenv("NEXTCLOUD_CLIENT_SECRET", "")
+NC_REDIRECT_URI = os.getenv("OAUTH_REDIRECT_URI", "")
+NC_VERIFY_TLS = os.getenv("NC_VERIFY_TLS", "1") != "0"
+MANAGER_GROUPS = {x.strip().casefold() for x in os.getenv("MANAGER_GROUPS", "").split(",") if x.strip()}
+URLAUBSPLANER_API = os.getenv("URLAUBSPLANER_API", "").rstrip("/")
+INVENTUR_API_TOKEN = os.getenv("INVENTUR_API_TOKEN", "")
+NC_ENABLED = bool(NC_BASE_URL and NC_CLIENT_ID and NC_CLIENT_SECRET)
+OPEN_ENDPOINTS = {'login', 'logout', 'oauth_start', 'oauth_callback', 'static'}
+_kst_cache = {'ts': 0.0, 'rows': None}
+
+
+def fetch_nc_kostenstellen():
+    """Aktive Kostenstellen aus dem Urlaubsplaner; bei Ausfall letzter Stand, sonst lokale Tabelle."""
+    now = time.time()
+    if _kst_cache['rows'] is not None and now - _kst_cache['ts'] < 300:
+        return _kst_cache['rows']
+    if URLAUBSPLANER_API and INVENTUR_API_TOKEN:
+        try:
+            resp = requests.get(
+                f"{URLAUBSPLANER_API}/api/inventur/kostenstellen",
+                headers={"Authorization": f"Bearer {INVENTUR_API_TOKEN}"},
+                timeout=5,
+            )
+            resp.raise_for_status()
+            rows = [(r["nummer"], r["bezeichnung"]) for r in resp.json()]
+            _kst_cache.update(ts=now, rows=rows)
+            return rows
+        except (requests.RequestException, ValueError, KeyError):
+            logger.exception("Kostenstellen aus Urlaubsplaner nicht abrufbar")
+            if _kst_cache['rows'] is not None:
+                return _kst_cache['rows']
+    return None
+
+
+@app.before_request
+def require_login():
+    if not NC_ENABLED or request.endpoint in OPEN_ENDPOINTS:
+        return None
+    if session.get('is_admin') or session.get('nc_user'):
+        return None
+    if request.method == 'GET' and not request.path.startswith(('/search', '/get_cart', '/recent_', '/existing_')):
+        return redirect(url_for('login'))
+    return respond_error('Bitte anmelden.', status=401)
+
+
+@app.route('/oauth/start')
+def oauth_start():
+    if not NC_ENABLED:
+        return redirect(url_for('login'))
+    state = secrets.token_urlsafe(24)
+    session['oauth_state'] = state
+    params = {"response_type": "code", "client_id": NC_CLIENT_ID,
+              "redirect_uri": NC_REDIRECT_URI, "state": state}
+    return redirect(f"{NC_BASE_URL}/apps/oauth2/authorize?{urlencode(params)}")
+
+
+@app.route('/oauth/callback')
+def oauth_callback():
+    expected = session.pop('oauth_state', None)
+    if not expected or not secrets.compare_digest(request.args.get('state', ''), expected):
+        return Response('Ungültiger Login-Status. Bitte erneut anmelden.', status=400)
+    code = request.args.get('code')
+    if not code:
+        return Response('Anmeldung abgebrochen.', status=400)
+    try:
+        tok = requests.post(
+            f"{NC_BASE_URL}/apps/oauth2/api/v1/token",
+            data={"grant_type": "authorization_code", "code": code,
+                  "client_id": NC_CLIENT_ID, "client_secret": NC_CLIENT_SECRET,
+                  "redirect_uri": NC_REDIRECT_URI},
+            timeout=10, verify=NC_VERIFY_TLS,
+        )
+        tok.raise_for_status()
+        info = requests.get(
+            f"{NC_BASE_URL}/ocs/v2.php/cloud/user?format=json",
+            headers={"Authorization": f"Bearer {tok.json()['access_token']}",
+                     "OCS-APIRequest": "true", "Accept": "application/json"},
+            timeout=10, verify=NC_VERIFY_TLS,
+        )
+        info.raise_for_status()
+        data = info.json()["ocs"]["data"]
+    except (requests.RequestException, ValueError, KeyError):
+        logger.exception("Nextcloud-Login fehlgeschlagen")
+        return Response('Nextcloud-Login fehlgeschlagen.', status=502)
+    uid = str(data.get('id') or '')
+    if not uid:
+        return Response('Nextcloud lieferte keine Benutzer-ID.', status=502)
+    groups = [str(g) for g in (data.get('groups') or [])]
+    is_manager = any(g.casefold() in MANAGER_GROUPS for g in groups)
+    session.clear()
+    session['nc_user'] = uid
+    session['nc_name'] = str(data.get('displayname') or data.get('display-name') or uid)
+    session['is_admin'] = is_manager
+    audit_log('nc_login', f'{uid} ({"Verwaltung" if is_manager else "Erfassung"})')
+    return redirect(url_for('index'))
+
+
 @app.before_request
 def persist_session() -> None:
     session.permanent = True
     g.cart_token = request.cookies.get(CART_COOKIE) or ''
     g.new_cart_cookie = not g.cart_token
+    if session.get('nc_user'):
+        g.cart_token = 'nc:' + session['nc_user']
+        g.new_cart_cookie = False
     if g.new_cart_cookie:
         g.cart_token = uuid4().hex
 
@@ -576,7 +694,7 @@ def login():
             session['is_admin'] = True
             audit_log('admin_login', f'Benutzer: {username}')
             return redirect(url_for('admin'))
-    return render_template('login.html', error=error)
+    return render_template('login.html', error=error, nc_enabled=NC_ENABLED)
 
 
 @app.route('/logout')
@@ -1047,11 +1165,7 @@ def export_excel():
     if not kostenstelle_nummer:
         return respond_error('Kostenstellennummer ist erforderlich.')
 
-    with db_connection(COST_CENTER_DB) as conn:
-        kostenstelle_bezeichnung = conn.execute(
-            'SELECT kostenstellen_bezeichnung FROM kostenstellen WHERE kostenstellen_nummer = ?',
-            (kostenstelle_nummer,),
-        ).fetchone()
+    kostenstelle_bezeichnung = find_kostenstelle(kostenstelle_nummer)
 
     if not kostenstelle_bezeichnung:
         return respond_error('Keine gültige Kostenstellenbezeichnung gefunden.', 404)
@@ -1128,11 +1242,7 @@ def save_to_inventur():
     if not kostenstelle_nummer:
         return respond_error('Kostenstellennummer ist erforderlich.')
 
-    with db_connection(COST_CENTER_DB) as conn:
-        kostenstelle_bezeichnung = conn.execute(
-            'SELECT kostenstellen_bezeichnung FROM kostenstellen WHERE kostenstellen_nummer = ?',
-            (kostenstelle_nummer,),
-        ).fetchone()
+    kostenstelle_bezeichnung = find_kostenstelle(kostenstelle_nummer)
 
     if not kostenstelle_bezeichnung:
         return respond_error('Keine gültige Kostenstellenbezeichnung gefunden.', 404)

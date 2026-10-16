@@ -1,4 +1,4 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}Login{% endblock %}
 
 {% block page_header %}
@@ -11,7 +11,13 @@
 {% endblock %}
 
 {% block content %}
+{% if nc_enabled %}
 <section class="section-card" style="max-width: 480px;">
+    <a class="btn btn-custom btn-lg btn-block" href="{{ url_for('oauth_start') }}">Mit Nextcloud anmelden</a>
+</section>
+{% endif %}
+<section class="section-card" style="max-width: 480px;">
+    {% if nc_enabled %}<h2 class="h6 text-muted">Notfall-Login (lokaler Admin)</h2>{% endif %}
     <form method="post" action="{{ url_for('login') }}">
         <div class="form-group">
             <label for="username">Benutzername</label>
