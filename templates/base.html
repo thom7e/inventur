@@ -1,9 +1,34 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="de">
 <head>
     <script>document.documentElement.classList.add('js-enabled');</script>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <script>
+    (function () {
+        var token = document.querySelector('meta[name="csrf-token"]').content;
+        var origFetch = window.fetch;
+        window.fetch = function (url, opts) {
+            opts = opts || {};
+            var method = (opts.method || 'GET').toUpperCase();
+            if (method !== 'GET' && method !== 'HEAD') {
+                var h = new Headers(opts.headers || {});
+                h.set('X-CSRF-Token', token);
+                opts.headers = h;
+            }
+            return origFetch.call(this, url, opts);
+        };
+        document.addEventListener('DOMContentLoaded', function () {
+            document.querySelectorAll('form[method="post" i]').forEach(function (f) {
+                if (f.querySelector('input[name="_csrf_token"]')) return;
+                var i = document.createElement('input');
+                i.type = 'hidden'; i.name = '_csrf_token'; i.value = token;
+                f.appendChild(i);
+            });
+        });
+    })();
+    </script>
     <title>{% block title %}Inventur{% endblock %}</title>
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">

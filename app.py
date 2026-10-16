@@ -1,6 +1,7 @@
-﻿import io
+import io
 import os
 import re
+import secrets
 from datetime import datetime, timedelta, timezone
 import sqlite3
 import logging
@@ -462,12 +463,26 @@ if not _admin_password_hash:
 ADMIN_PASSWORD_HASH = _admin_password_hash
 
 
+def ensure_audit_log_table() -> None:
+    with db_connection(COST_CENTER_DB) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                user TEXT NOT NULL,
+                action TEXT NOT NULL,
+                details TEXT
+            )
+        """)
+        conn.commit()
+
+
 def _bootstrap() -> None:
-    # bestehende Initialisierungen, z.B. Tabellen sicherstellen
     try:
         ensure_cart_table()
         ensure_cost_center_archive_table()
-        ensure_app_meta_table()  # <--- NEU
+        ensure_app_meta_table()
+        ensure_audit_log_table()
         ensure_cost_center_unique_index()
 
     except Exception:
@@ -479,6 +494,50 @@ if hasattr(app, "before_first_request"):
     app.before_first_request(_bootstrap)  # type: ignore[attr-defined]
 else:
     _bootstrap()
+
+
+@app.context_processor
+def inject_csrf_token():
+    return {'csrf_token': generate_csrf_token}
+
+
+def generate_csrf_token() -> str:
+    if 'csrf_token' not in session:
+        session['csrf_token'] = secrets.token_hex(32)
+    return session['csrf_token']
+
+
+@app.before_request
+def enforce_csrf():
+    if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        return None
+    expected = session.get('csrf_token', '')
+    token = request.form.get('_csrf_token') or request.headers.get('X-CSRF-Token') or ''
+    if not expected or not secrets.compare_digest(token, expected):
+        return respond_error('Ungültiger CSRF-Token. Seite neu laden.', status=403)
+    return None
+
+
+def audit_log(action: str, details: str = '') -> None:
+    user = 'admin' if session.get('is_admin') else 'anonym'
+    logger.info("AUDIT | %s | %s | %s", user, action, details)
+    try:
+        with db_connection(COST_CENTER_DB) as conn:
+            conn.execute(
+                "INSERT INTO audit_log (timestamp, user, action, details) VALUES (?, ?, ?, ?)",
+                (datetime.now(timezone.utc).isoformat(), user, action, details),
+            )
+            conn.commit()
+    except sqlite3.Error:
+        logger.exception("Audit-Log konnte nicht geschrieben werden")
+
+
+
+@app.after_request
+def audit_admin_actions(response):
+    if request.method == 'POST' and session.get('is_admin') and response.status_code < 400             and request.path not in ('/login', '/search', '/admin/search'):
+        audit_log(request.path)
+    return response
 
 
 @app.before_request
@@ -495,11 +554,13 @@ def login():
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
         if username != ADMIN_USERNAME or not check_password_hash(ADMIN_PASSWORD_HASH, password):
+            logger.warning("Fehlgeschlagener Login für %s", username)
             error = 'Ungültiger Benutzername oder Passwort'
         else:
             session.clear()
             session['is_admin'] = True
             session['cart_token'] = uuid4().hex
+            audit_log('admin_login', f'Benutzer: {username}')
             return redirect(url_for('admin'))
     return render_template('login.html', error=error)
 
