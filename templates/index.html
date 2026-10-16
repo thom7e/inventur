@@ -13,17 +13,16 @@
 
 {% block content %}
 
-
 <section class="section-card">
     <h2>Neuen Artikel hinzufügen</h2>
     <form id="addArticleForm" class="form-row align-items-end">
         <div class="form-group col-lg-5">
             <label for="artikelname">Artikelname</label>
-            <input type="text" class="form-control form-control-lg" id="artikelname" maxlength="200" required>
+            <input type="text" class="form-control form-control-lg" id="artikelname" required>
         </div>
         <div class="form-group col-lg-3">
             <label for="einheit">Einheit</label>
-            <input type="text" class="form-control form-control-lg" id="einheit" maxlength="50" required>
+            <input type="text" class="form-control form-control-lg" id="einheit" required>
         </div>
         <div class="form-group col-lg-2">
             <label for="preis">Preis (€)</label>
@@ -34,14 +33,22 @@
         </div>
     </form>
 </section>
+
 <section class="section-card">
     <h2>Artikel suchen</h2>
     <form id="searchForm" method="post" autocomplete="off">
         <div class="form-group mb-3">
             <label class="sr-only" for="search_query">Artikel suchen</label>
-            <input type="text" class="form-control form-control-lg" id="search_query" name="search_query" placeholder="Artikelname eingeben" value="{{ search_query }}" maxlength="200">
+            <input type="text"
+                   class="form-control form-control-lg"
+                   id="search_query"
+                   name="search_query"
+                   placeholder="Artikelname eingeben"
+                   value="{{ search_query }}">
         </div>
-        <p class="text-muted small mb-2">Tippen Sie mindestens zwei Zeichen - Ergebnisse werden automatisch aktualisiert.</p>
+        <p class="text-muted small mb-2">
+            Tippen Sie mindestens zwei Zeichen - Ergebnisse werden automatisch aktualisiert.
+        </p>
         <div class="form-group mb-0">
             <button type="submit" class="btn btn-custom btn-lg search-submit">Suchen</button>
         </div>
@@ -53,8 +60,7 @@
         <h2 class="mb-0">Suchergebnisse</h2>
         <small class="text-muted" id="resultCount"></small>
     </div>
-    <div id="search-results" class="search-results"
-         role="region" aria-live="polite" aria-label="Suchergebnisse">
+    <div id="search-results" class="search-results">
         <p class="text-muted mb-0">Bitte mindestens zwei Zeichen eingeben.</p>
         <noscript>
             {% if results_payload %}
@@ -62,7 +68,9 @@
                 {% for result in results_payload %}
                     <li class="mb-2">
                         <strong>{{ result.artikelname }}</strong><br>
-                        <span class="text-muted small">Einheit: {{ result.einheit }} | Preis: {{ '%.2f' | format(result.preis) }}</span>
+                        <span class="text-muted small">
+                            Einheit: {{ result.einheit }} | Preis: {{ '%.2f' | format(result.preis) }}
+                        </span>
                     </li>
                 {% endfor %}
                 </ul>
@@ -75,22 +83,38 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h2 class="mb-0">Warenkorb</h2>
         <form method="post" action="{{ url_for('clear_cart') }}">
-            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-outline-secondary btn-sm px-4 py-2">Warenkorb leeren</button>
+            <button type="submit" class="btn btn-outline-secondary btn-sm px-4 py-2">
+                Warenkorb leeren
+            </button>
         </form>
     </div>
     <ul id="cart-list" class="list-unstyled mb-4">
         {% for item in cart %}
             <li data-artikel="{{ item.artikelname }}">
-                <div>
-                    <span class="font-weight-bold">{{ item.artikelname }}</span>
-                    <small class="text-muted ml-2">{{ item.einheit }}</small>
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <span class="font-weight-bold">{{ item.artikelname }}</span>
+                        <small class="text-muted ml-2">{{ item.einheit }}</small>
+                    </div>
+                    <button type="button"
+                            class="btn btn-sm btn-outline-danger cart-remove"
+                            data-artikel="{{ item.artikelname }}">
+                        Entfernen
+                    </button>
                 </div>
-                <div class="text-muted small">Menge: {{ item.menge }} | Preis: {{ item.preis }} | Gesamt: {{ item.gesamtpreis }}</div>
+                <div class="text-muted small">
+                    Menge: {{ item.menge }}
+                    | Preis: {{ item.preis }}
+                    | Gesamt: {{ item.gesamtpreis }}
+                </div>
             </li>
         {% endfor %}
     </ul>
-    <p id="cart-empty-hint" class="text-muted mb-0" {% if cart %}style="display:none"{% endif %}>Noch keine Artikel im Warenkorb.</p>
+    <p id="cart-empty-hint"
+       class="text-muted mb-0"
+       {% if cart %}style="display:none"{% endif %}>
+        Noch keine Artikel im Warenkorb.
+    </p>
 </section>
 
 <section class="section-card" id="exportActions">
@@ -110,38 +134,13 @@
             {% endfor %}
           </select>
         </div>
-        <button type="submit" class="btn btn-custom btn-lg btn-block" id="saveToInventurSubmitBtn">
-          In Inventur speichern
+        <button type="submit" class="btn btn-custom btn-lg btn-block">
+            In Inventur speichern
         </button>
       </form>
     </div>
   </div>
 </section>
-
-{# Modal: Inventur-Speicher-Bestätigung #}
-<div class="modal fade" id="saveConfirmModal" tabindex="-1"
-     aria-labelledby="saveConfirmModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="saveConfirmModalLabel">Inventur speichern – Bestätigung</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Schließen">
-                    <span aria-hidden="true">&times;</span>
-                </button>
-            </div>
-            <div class="modal-body">
-                <p>Folgende Positionen werden gespeichert:</p>
-                <ul id="saveConfirmList" class="small"></ul>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Abbrechen</button>
-                <button type="button" class="btn btn-custom" id="saveConfirmDoBtn">
-                    Jetzt speichern
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
 {% endblock %}
 
 {% block scripts %}
@@ -157,6 +156,7 @@
     var cartList = document.getElementById('cart-list');
     var cartHint = document.getElementById('cart-empty-hint');
     var scrollToActionsBtn = document.getElementById('scrollToActions');
+    var addArticleForm = document.getElementById('addArticleForm');
 
     // --------- Utils ----------
     function debounce(fn, delay) {
@@ -172,13 +172,15 @@
             .replace(/>/g,'&gt;').replace(/"/g,'&quot;')
             .replace(/'/g,'&#039;');
     }
-    function formatCurrency(v){ v = Number(v); return Number.isNaN(v) ? '0.00' : v.toFixed(2); }
+    function formatCurrency(v){
+        v = Number(v);
+        return Number.isNaN(v) ? '0.00' : v.toFixed(2);
+    }
 
     // akzeptiert Array oder {results:[...]}
     function normalizeResults(maybe) {
         if (Array.isArray(maybe)) return maybe;
         if (maybe && Array.isArray(maybe.results)) return maybe.results;
-        // manche Backends schicken {data:[...]}
         if (maybe && Array.isArray(maybe.data)) return maybe.data;
         return [];
     }
@@ -187,7 +189,6 @@
     function toJson(promise) {
         return promise.then(function (res) {
             if (typeof window.handleJsonResponse === 'function') {
-                // handleJsonResponse erwartet meist ein Response-Objekt ODER JSON; wir fangen beides ab
                 try { return window.handleJsonResponse(res); }
                 catch(e){ return res.json(); }
             }
@@ -203,19 +204,34 @@
             return;
         }
         cartHint.style.display = 'none';
+
         items.forEach(function (item) {
             var li = document.createElement('li');
             li.dataset.artikel = item.artikelname;
+
+            var header = document.createElement('div');
+            header.className = 'd-flex justify-content-between align-items-center';
 
             var title = document.createElement('div');
             var name = document.createElement('span');
             name.className = 'font-weight-bold';
             name.textContent = item.artikelname;
+
             var unit = document.createElement('small');
             unit.className = 'text-muted ml-2';
             unit.textContent = item.einheit || '';
 
-            title.appendChild(name); title.appendChild(unit);
+            title.appendChild(name);
+            title.appendChild(unit);
+
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-sm btn-outline-danger cart-remove';
+            btn.dataset.artikel = item.artikelname;
+            btn.textContent = 'Entfernen';
+
+            header.appendChild(title);
+            header.appendChild(btn);
 
             var meta = document.createElement('div');
             meta.className = 'text-muted small';
@@ -223,7 +239,8 @@
                 ' | Preis: ' + formatCurrency(item.preis) +
                 ' | Gesamt: ' + formatCurrency(item.gesamtpreis);
 
-            li.appendChild(title); li.appendChild(meta);
+            li.appendChild(header);
+            li.appendChild(meta);
             cartList.appendChild(li);
         });
     }
@@ -233,13 +250,16 @@
         if (!searchResultsContainer) return;
         var list = normalizeResults(results);
         if (!list.length) {
-            searchResultsContainer.innerHTML = '<p class="text-muted mb-0">Keine Treffer.</p>';
+            searchResultsContainer.innerHTML =
+                '<p class="text-muted mb-0">Keine Treffer.</p>';
             if (resultCount) resultCount.textContent = '';
             return;
         }
         searchResultsContainer.innerHTML = list.map(function (r) {
             var preis = (r.preis !== undefined) ? r.preis : '';
-            var einheit = r.einheit ? ' <small class="text-muted">' + escapeHtml(r.einheit) + '</small>' : '';
+            var einheit = r.einheit
+                ? ' <small class="text-muted">' + escapeHtml(r.einheit) + '</small>'
+                : '';
             var artikel = escapeHtml(r.artikelname);
             return (
               '<div class="search-result-item p-2 mb-2 border rounded" data-artikel="' + artikel + '">' +
@@ -248,7 +268,8 @@
                   '<div class="text-right">' + escapeHtml(String(preis)) + '</div>' +
                 '</div>' +
                 '<div class="mt-2 d-flex align-items-center" style="gap:0.5rem;">' +
-                  '<input type="number" name="quantity" class="form-control form-control-sm quantity" min="0.01" step="0.01" value="1" style="max-width:120px" />' +
+                  '<input type="number" name="quantity" class="form-control form-control-sm quantity" ' +
+                         'min="0.01" step="0.01" value="1" style="max-width:120px" />' +
                   '<button type="button" class="btn btn-custom btn-sm add-to-cart">In Warenkorb</button>' +
                 '</div>' +
               '</div>'
@@ -263,7 +284,8 @@
         if (!query || query.length < 2) {
             if (resultCount) resultCount.textContent = '';
             if (searchResultsContainer)
-                searchResultsContainer.innerHTML = '<p class="text-muted mb-0">Bitte mindestens zwei Zeichen eingeben.</p>';
+                searchResultsContainer.innerHTML =
+                    '<p class="text-muted mb-0">Bitte mindestens zwei Zeichen eingeben.</p>';
             return;
         }
 
@@ -280,7 +302,8 @@
         .catch(function (err) {
             console.error('Search error:', err);
             if (searchResultsContainer)
-                searchResultsContainer.innerHTML = '<p class="text-danger mb-0">Fehler bei der Suche.</p>';
+                searchResultsContainer.innerHTML =
+                    '<p class="text-danger mb-0">Fehler bei der Suche.</p>';
             window.showToast && window.showToast('Fehler bei der Suche.', 'error');
         });
     }
@@ -309,21 +332,26 @@
             var itemEl = btn.closest('.search-result-item');
             if (!itemEl) return;
 
-            var artikelname = itemEl.dataset.artikel || (itemEl.querySelector('.artikel-name') && itemEl.querySelector('.artikel-name').textContent.trim()) || '';
+            var artikelname = itemEl.dataset.artikel
+                || (itemEl.querySelector('.artikel-name')
+                    && itemEl.querySelector('.artikel-name').textContent.trim())
+                || '';
             var qtyInput = itemEl.querySelector('input[name="quantity"], input.quantity');
             var menge = qtyInput ? qtyInput.value : '1';
 
             menge = String(menge).replace(',', '.');
             var mengeNum = Number(menge);
             if (!isFinite(mengeNum) || mengeNum <= 0) {
-                window.showToast && window.showToast('Bitte eine gültige Menge > 0 eingeben.', 'error');
-                if (qtyInput) { qtyInput.focus(); qtyInput.classList.add('is-invalid'); }
+                window.showToast && window.showToast(
+                    'Bitte eine gültige Menge > 0 eingeben.', 'error'
+                );
                 return;
             }
-            if (qtyInput) qtyInput.classList.remove('is-invalid');
 
-            var body = new URLSearchParams({ artikelname: artikelname, menge: String(mengeNum) });
-            window.setButtonLoading && window.setButtonLoading(btn, true);
+            var body = new URLSearchParams({
+                artikelname: artikelname,
+                menge: String(mengeNum)
+            });
 
             toJson(fetch('/add_to_cart', {
                 method: 'POST',
@@ -331,13 +359,11 @@
                 body: body.toString()
             }))
             .then(function (data) {
-                window.setButtonLoading && window.setButtonLoading(btn, false);
                 cartState = data;
                 renderCart(cartState);
-                window.showToast && window.showToast(artikelname + ' übernommen.', 'success');
+                window.showToast && window.showToast('Artikel übernommen.', 'success');
             })
             .catch(function (err) {
-                window.setButtonLoading && window.setButtonLoading(btn, false);
                 console.error('add_to_cart error:', err);
                 window.showToast && window.showToast('Fehler beim Hinzufügen.', 'error');
             });
@@ -355,13 +381,88 @@
         });
     }
 
+    // --------- Einzelne Artikel aus dem Warenkorb entfernen ----------
+    if (cartList) {
+        cartList.addEventListener('click', function (ev) {
+            var btn = ev.target.closest('.cart-remove');
+            if (!btn) return;
 
-    var saveForm       = document.getElementById('saveToInventurForm');
-    var saveSubmitBtn  = document.getElementById('saveToInventurSubmitBtn');
-    var confirmModal   = document.getElementById('saveConfirmModal');
-    var confirmList    = document.getElementById('saveConfirmList');
-    var confirmDoBtn   = document.getElementById('saveConfirmDoBtn');
+            var artikelname = btn.dataset.artikel
+                || (btn.closest('li') && btn.closest('li').dataset.artikel);
+            if (!artikelname) return;
 
+            if (!window.confirm('Diesen Artikel aus dem Warenkorb entfernen?')) {
+                return;
+            }
+
+            toJson(fetch('/remove_from_cart', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ artikelname: artikelname })
+            }))
+            .then(function (data) {
+                if (Array.isArray(data)) {
+                    cartState = data;
+                } else if (data && Array.isArray(data.items)) {
+                    cartState = data.items;
+                } else {
+                    cartState = [];
+                }
+                renderCart(cartState);
+                window.showToast && window.showToast('Artikel entfernt.', 'success');
+            })
+            .catch(function (err) {
+                console.error('remove_from_cart error:', err);
+                window.showToast && window.showToast('Fehler beim Entfernen.', 'error');
+            });
+        });
+    }
+
+    // --------- Neuen Artikel anlegen (Upsert) ----------
+    if (addArticleForm) {
+        addArticleForm.addEventListener('submit', function (e) {
+            e.preventDefault();
+
+            var nameInput = document.getElementById('artikelname');
+            var einheitInput = document.getElementById('einheit');
+            var preisInput = document.getElementById('preis');
+
+            var artikelname = nameInput ? nameInput.value.trim() : '';
+            var einheit = einheitInput ? einheitInput.value.trim() : '';
+            var preis = preisInput ? preisInput.value.trim() : '';
+
+            if (!artikelname || !einheit || !preis) {
+                window.showToast && window.showToast(
+                    'Bitte alle Felder ausfüllen.', 'error'
+                );
+                return;
+            }
+
+            toJson(fetch('/add_artikel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    artikelname: artikelname,
+                    einheit: einheit,
+                    preis: preis
+                })
+            }))
+            .then(function (res) {
+                window.showToast && window.showToast(res.message || 'Gespeichert.', 'success');
+                // Felder leeren
+                if (nameInput) nameInput.value = '';
+                if (einheitInput) einheitInput.value = '';
+                if (preisInput) preisInput.value = '';
+            })
+            .catch(function (err) {
+                console.error('add_artikel error:', err);
+                window.showToast && window.showToast('Fehler beim Speichern.', 'error');
+            });
+        });
+    }
+
+    // --------- Save-to-Inventur ----------
+    var saveForm = document.getElementById('saveToInventurForm');
     if (saveForm) {
         saveForm.addEventListener('submit', function (e) {
             e.preventDefault();
@@ -369,50 +470,78 @@
                 window.showToast && window.showToast('Der Warenkorb ist leer.', 'error');
                 return;
             }
-            // Inhalt im Modal anzeigen
+
+            // aktuelle Daten holen (falls Server-Seite rechnet)
             toJson(fetch('/get_cart'))
             .then(function (items) {
                 var list = Array.isArray(items) ? items : [];
-                if (confirmList) {
-                    confirmList.innerHTML = list.map(function (it) {
-                        return '<li><strong>' + escapeHtml(it.artikelname) + '</strong>'
-                            + ' – Menge: ' + escapeHtml(String(it.menge))
-                            + ' | Gesamt: ' + formatCurrency(it.gesamtpreis) + ' €</li>';
-                    }).join('');
-                }
-                if (confirmModal && typeof $ !== 'undefined') {
-                    $(confirmModal).modal('show');
-                } else {
-                    // Fallback: direkt speichern
-                    doSave();
-                }
+                var summary = list.map(function (it) {
+                    return it.artikelname +
+                        ' - Menge: ' + it.menge +
+                        ' | Gesamt: ' + formatCurrency(it.gesamtpreis);
+                }).join('\n');
+                var msg = 'Folgende Positionen werden gespeichert:\n\n' + summary;
+                if (!window.confirm(msg)) return;
+
+                return fetch('/save_to_inventur', {
+                    method: 'POST',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: new FormData(saveForm)
+                });
             })
-            .catch(function () { window.showToast && window.showToast('Fehler beim Laden des Warenkorbs.', 'error'); });
+            .then(function (res) {
+                if (!res) return;
+
+                var ct = (res.headers.get('Content-Type') || '').toLowerCase();
+
+                // Normalfall: JSON-Antwort vom Backend
+                if (ct.indexOf('application/json') !== -1) {
+                    return res.json().then(function (data) {
+                        if (res.ok && data && data.success) {
+                            window.showToast && window.showToast(
+                                data.message || 'Inventur gespeichert.',
+                                'success'
+                            );
+                            window.location.reload();
+                        } else {
+                            var msg = (data && data.message) || 'Speichern fehlgeschlagen.';
+                            window.showToast && window.showToast(msg, 'error');
+                        }
+                    }).catch(function () {
+                        // JSON kaputt, aber HTTP-Status evtl. ok
+                        window.showToast && window.showToast(
+                            'Speichern fehlgeschlagen (ungültige Antwort).',
+                            'error'
+                        );
+                    });
+                }
+
+                // Fallback: keine JSON-Antwort (z.B. Redirect/HTML)
+                return res.text().then(function (text) {
+                    if (res.redirected) {
+                        // Server hat redirect gemacht → einfach folgen
+                        window.location.href = res.url;
+                        return;
+                    }
+                    if (res.ok) {
+                        // 200er-Status, aber kein JSON → wir werten das als Erfolg
+                        window.showToast && window.showToast('Inventur gespeichert.', 'success');
+                        window.location.reload();
+                    } else {
+                        window.showToast && window.showToast('Speichern fehlgeschlagen.', 'error');
+                    }
+                });
+            })
+            .catch(function (err) {
+                console.error('Fehler bei save_to_inventur:', err);
+                window.showToast && window.showToast('Fehler beim Speichern.', 'error');
+            });
         });
     }
 
-    function doSave() {
-        window.setButtonLoading && window.setButtonLoading(saveSubmitBtn, true);
-        window.setButtonLoading && window.setButtonLoading(confirmDoBtn, true);
-        fetch('/save_to_inventur', { method: 'POST', body: new FormData(saveForm) })
-        .then(function (res) {
-            if (res.redirected) { window.location.href = res.url; }
-            else if (res.ok) { window.location.reload(); }
-            else { window.showToast && window.showToast('Speichern fehlgeschlagen.', 'error'); }
-        })
-        .catch(function () {
-            window.setButtonLoading && window.setButtonLoading(saveSubmitBtn, false);
-            window.setButtonLoading && window.setButtonLoading(confirmDoBtn, false);
-            window.showToast && window.showToast('Fehler beim Speichern.', 'error');
-        });
-    }
 
-    if (confirmDoBtn) {
-        confirmDoBtn.addEventListener('click', function () {
-            if (confirmModal && typeof $ !== 'undefined') $(confirmModal).modal('hide');
-            doSave();
-        });
-    }
 
     // --------- Scroll ----------
     if (scrollToActionsBtn) {
@@ -430,11 +559,10 @@
     } else {
         if (resultCount) resultCount.textContent = '';
         if (searchResultsContainer && !searchResultsContainer.textContent.trim()) {
-            searchResultsContainer.innerHTML = '<p class="text-muted mb-0">Bitte mindestens zwei Zeichen eingeben.</p>';
+            searchResultsContainer.innerHTML =
+                '<p class="text-muted mb-0">Bitte mindestens zwei Zeichen eingeben.</p>';
         }
     }
 })();
 </script>
 {% endblock %}
-
-

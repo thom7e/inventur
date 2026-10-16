@@ -1,14 +1,13 @@
 ﻿import io
 import os
 import re
-import secrets
 from datetime import datetime, timedelta, timezone
-from functools import wraps
 import sqlite3
 import logging
 from contextlib import contextmanager
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from uuid import uuid4
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import openpyxl
 from flask import (
@@ -68,99 +67,26 @@ def normalize_decimal_value(value, *, default=Decimal('0')) -> Decimal:
         except InvalidOperation:
             return default
 
+def normalize_article_name(name: str) -> str:
+    """
+    Artikelname normieren:
+    - None -> ''
+    - vorne/hinten trimmen
+    - mehrere Leerzeichen innerhalb auf ein Leerzeichen reduzieren
+    """
+    if not name:
+        return ""
+    # trim
+    cleaned = name.strip()
+    # mehrere Leerzeichen zu einem machen
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned
 
 def respond_error(message: str, status: int = 400):
     return jsonify({"success": False, "message": message}), status
 
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# CSRF-Schutz
-# ---------------------------------------------------------------------------
-
-def generate_csrf_token() -> str:
-    """Gibt den Session-CSRF-Token zurück (wird bei Bedarf erstellt)."""
-    if 'csrf_token' not in session:
-        session['csrf_token'] = secrets.token_hex(32)
-    return session['csrf_token']
-
-
-def validate_csrf() -> bool:
-    """Prüft den CSRF-Token aus Formular, JSON-Body oder HTTP-Header."""
-    expected = session.get('csrf_token')
-    if not expected:
-        return False
-    token = (
-        request.form.get('_csrf_token')
-        or request.headers.get('X-CSRF-Token')
-        or (request.get_json(silent=True) or {}).get('_csrf_token')
-    )
-    return secrets.compare_digest(str(token or ''), str(expected))
-
-
-def require_csrf(f):
-    """Dekorator: Validiert den CSRF-Token bei zustandsändernden Methoden."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
-            if not validate_csrf():
-                if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                    return respond_error('Ungültiger CSRF-Token.', status=403)
-                return Response('Ungültiger CSRF-Token.', status=403)
-        return f(*args, **kwargs)
-    return decorated
-
-
-def require_admin(f):
-    """Dekorator: Erfordert eine aktive Admin-Session."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not session.get('is_admin'):
-            if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                return respond_error('Unbefugter Zugriff', status=403)
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
-    return decorated
-
-
-# ---------------------------------------------------------------------------
-# Audit-Log
-# ---------------------------------------------------------------------------
-
-def ensure_audit_log_table() -> None:
-    with db_connection(COST_CENTER_DB) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS audit_log (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT    NOT NULL,
-                user      TEXT    NOT NULL,
-                action    TEXT    NOT NULL,
-                details   TEXT
-            )
-        """)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log(timestamp)"
-        )
-        conn.commit()
-
-
-def audit_log(action: str, details: str = '') -> None:
-    """Schreibt einen Audit-Log-Eintrag in die Datenbank und den Logger."""
-    user = 'admin' if session.get('is_admin') else 'anonym'
-    ts = datetime.now(timezone.utc).isoformat()
-    logger.info("AUDIT | %s | %s | %s | %s", ts, user, action, details)
-    try:
-        with db_connection(COST_CENTER_DB) as conn:
-            conn.execute(
-                "INSERT INTO audit_log (timestamp, user, action, details) VALUES (?, ?, ?, ?)",
-                (ts, user, action, details),
-            )
-            conn.commit()
-    except sqlite3.Error:
-        logger.exception("Audit-Log konnte nicht geschrieben werden")
-
 
 @contextmanager
 def db_connection(db_path: str):
@@ -241,36 +167,6 @@ def ensure_app_meta_table() -> None:
         )
         conn.commit()
 
-def ensure_kostenstellen_table() -> None:
-    with db_connection(COST_CENTER_DB) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS kostenstellen (
-                kostenstellen_nummer      TEXT NOT NULL,
-                kostenstellen_bezeichnung TEXT NOT NULL
-            )
-        """)
-        conn.commit()
-
-
-def ensure_inventur_table() -> None:
-    with db_connection(COST_CENTER_DB) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS inventur (
-                kostenstelle TEXT NOT NULL,
-                jahr         INTEGER NOT NULL,
-                artikelname  TEXT NOT NULL,
-                einheit      TEXT NOT NULL,
-                menge        TEXT NOT NULL,
-                preis        TEXT NOT NULL,
-                gesamtpreis  TEXT NOT NULL
-            )
-        """)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_inventur_jahr ON inventur(jahr)"
-        )
-        conn.commit()
-
-
 def ensure_cost_center_unique_index():
     with db_connection(COST_CENTER_DB) as conn:
         conn.execute("""
@@ -336,13 +232,17 @@ def parse_decimal(
 
 
 def fetch_article_by_name(artikelname: str):
+    name = normalize_article_name(artikelname)
     with db_connection(ARTICLE_DB) as conn:
         row = conn.execute(
-            "SELECT artikelname, einheit, preis FROM artikel WHERE artikelname = ? COLLATE NOCASE",
-            (artikelname.strip(),),
+            """
+            SELECT artikelname, einheit, preis
+            FROM artikel
+            WHERE TRIM(artikelname) = ? COLLATE NOCASE
+            """,
+            (name,),
         ).fetchone()
     return row
-
 
 def fetch_articles(search_query: str):
     term = f"%{search_query.strip().lower()}%"
@@ -538,6 +438,11 @@ def group_inventur_rows(rows):
 
 
 app = Flask(__name__)
+# Sagt Flask, dass es unter /inventur läuft
+# Ändere diese Zeile:
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+
 app.config.update(
     SECRET_KEY=os.getenv("FLASK_SECRET_KEY") or _generate_default_secret(),
     SESSION_COOKIE_HTTPONLY=True,
@@ -558,14 +463,13 @@ ADMIN_PASSWORD_HASH = _admin_password_hash
 
 
 def _bootstrap() -> None:
+    # bestehende Initialisierungen, z.B. Tabellen sicherstellen
     try:
-        ensure_kostenstellen_table()
-        ensure_inventur_table()
         ensure_cart_table()
         ensure_cost_center_archive_table()
-        ensure_app_meta_table()
+        ensure_app_meta_table()  # <--- NEU
         ensure_cost_center_unique_index()
-        ensure_audit_log_table()
+
     except Exception:
         app.logger.exception("Bootstrap failed")
 
@@ -577,12 +481,6 @@ else:
     _bootstrap()
 
 
-@app.context_processor
-def inject_csrf_token():
-    """Macht csrf_token() in allen Templates verfügbar."""
-    return {'csrf_token': generate_csrf_token}
-
-
 @app.before_request
 def persist_session() -> None:
     session.permanent = True
@@ -591,7 +489,6 @@ def persist_session() -> None:
 
 
 @app.route('/login', methods=['GET', 'POST'])
-@require_csrf
 def login():
     error = None
     if request.method == 'POST':
@@ -599,9 +496,7 @@ def login():
         password = request.form.get('password', '')
         if username != ADMIN_USERNAME or not check_password_hash(ADMIN_PASSWORD_HASH, password):
             error = 'Ungültiger Benutzername oder Passwort'
-            logger.warning("Fehlgeschlagener Login-Versuch für Benutzer: %s", username)
         else:
-            audit_log('admin_login', f'Benutzer: {username}')
             session.clear()
             session['is_admin'] = True
             session['cart_token'] = uuid4().hex
@@ -616,8 +511,9 @@ def logout():
 
 
 @app.route('/admin')
-@require_admin
 def admin():
+    if not session.get('is_admin'):
+        return redirect(url_for('login'))
 
     with db_connection(ARTICLE_DB) as conn:
         rows = conn.execute(
@@ -646,9 +542,10 @@ def admin():
     )
 
 @app.route('/admin/clear_cost_centers', methods=['POST'])
-@require_admin
-@require_csrf
 def admin_clear_cost_centers():
+    if not session.get('is_admin'):
+        return respond_error('Unbefugter Zugriff', status=403)
+
     with db_connection(COST_CENTER_DB) as conn:
         cur = conn.execute('DELETE FROM kostenstellen')
         deleted = cur.rowcount if hasattr(cur, 'rowcount') else None
@@ -657,14 +554,14 @@ def admin_clear_cost_centers():
     msg = 'Kostenstellen wurden geleert.'
     if isinstance(deleted, int) and deleted >= 0:
         msg = f'Kostenstellen wurden geleert ({deleted} Einträge).'
-    audit_log('kostenstellen_geleert', f'{deleted if deleted is not None else "?"} Einträge gelöscht')
     return jsonify({'success': True, 'message': msg})
 
 
 @app.route('/admin/add_cost_center', methods=['POST'])
-@require_admin
-@require_csrf
 def admin_add_cost_center():
+    if not session.get('is_admin'):
+        return respond_error('Unbefugter Zugriff', status=403)
+
     data = request.get_json(silent=True) or {}
     nummer = (data.get('nummer') or '').strip()
     bezeichnung = (data.get('bezeichnung') or '').strip()
@@ -672,9 +569,11 @@ def admin_add_cost_center():
     if not nummer or not bezeichnung:
         return respond_error('Nummer und Bezeichnung sind erforderlich.')
 
-    nummer_norm = nummer
+    # optional: simple Normalisierung
+    nummer_norm = nummer  # z.B. nummer.upper() wenn du es willst
 
     with db_connection(COST_CENTER_DB) as conn:
+        # Prüfe Duplikate (case-insensitive)
         exists = conn.execute(
             'SELECT 1 FROM kostenstellen WHERE kostenstellen_nummer = ? COLLATE NOCASE',
             (nummer_norm,)
@@ -688,13 +587,12 @@ def admin_add_cost_center():
         )
         conn.commit()
 
-    audit_log('kostenstelle_hinzugefuegt', f'Nummer: {nummer_norm}, Bezeichnung: {bezeichnung}')
     return jsonify({'success': True, 'message': f'Kostenstelle {nummer_norm} hinzugefügt.'})
 
 @app.route('/admin/bulk_add_cost_centers', methods=['POST'])
-@require_admin
-@require_csrf
 def admin_bulk_add_cost_centers():
+    if not session.get('is_admin'):
+        return respond_error('Unbefugter Zugriff', status=403)
 
     data = request.get_json(silent=True) or {}
     entries = data.get('kostenstellen', [])
@@ -740,14 +638,13 @@ def admin_bulk_add_cost_centers():
     msg = f'{added} Kostenstellen hinzugefügt'
     if skipped:
         msg += f', {skipped} übersprungen (bereits vorhanden)'
-    audit_log('kostenstellen_bulk_hinzugefuegt', f'{added} hinzugefügt, {skipped} übersprungen')
     return jsonify({'success': True, 'message': msg, 'added': added, 'skipped': skipped})
 
 
 @app.route('/admin/inventur/update_row', methods=['POST'])
-@require_admin
-@require_csrf
 def admin_update_inventur_row():
+    if not session.get('is_admin'):
+        return respond_error('Unbefugter Zugriff', status=403)
 
     data = request.get_json(silent=True) or {}
     try:
@@ -785,13 +682,13 @@ def admin_update_inventur_row():
         )
         conn.commit()
 
-    audit_log('inventur_zeile_aktualisiert', f'ID: {rid}, Artikel: {new_name}')
     return jsonify({'success': True, 'message': 'Eintrag aktualisiert.'})
 
 @app.route('/admin/inventur/delete_row', methods=['POST'])
-@require_admin
-@require_csrf
 def admin_delete_inventur_row():
+    if not session.get('is_admin'):
+        return respond_error('Unbefugter Zugriff', status=403)
+
     data = request.get_json(silent=True) or {}
     try:
         rid = int(data.get('id'))
@@ -809,7 +706,6 @@ def admin_delete_inventur_row():
         conn.execute("DELETE FROM inventur WHERE rowid = ?", (rid,))
         conn.commit()
 
-    audit_log('inventur_zeile_geloescht', f'ID: {rid}')
     return jsonify({'success': True, 'message': 'Eintrag gelöscht.'})
 
 
@@ -889,7 +785,6 @@ def admin_search():
 
 
 @app.route('/add_to_cart', methods=['POST'])
-@require_csrf
 def add_to_cart():
     artikelname = request.form.get('artikelname', '').strip()
     menge_raw = request.form.get('menge')
@@ -913,12 +808,68 @@ def add_to_cart():
     cart_items = fetch_cart_items(cart_token)
     return jsonify(cart_items_for_json(cart_items))
 
+@app.route('/remove_from_cart', methods=['POST'])
+def remove_from_cart():
+    """
+    Einen Artikel aus dem Warenkorb entfernen.
+    - Wenn 'menge' mitgeschickt wird: genau diese Menge abziehen
+    - Wenn 'menge' fehlt: gesamten Artikel entfernen
+    """
+    data = request.get_json(silent=True) or request.form or {}
+    artikelname = (data.get('artikelname') or '').strip()
+    menge_raw = data.get('menge')  # optional
+
+    if not artikelname:
+        return respond_error('Artikelname ist erforderlich.')
+
+    cart_token = session.get('cart_token')
+    if not cart_token:
+        return respond_error('Kein Warenkorb gefunden.')
+
+    with db_connection(COST_CENTER_DB) as conn:
+        row = conn.execute(
+            """
+            SELECT menge, einheit, preis
+            FROM session_cart_items
+            WHERE cart_token = ? AND artikelname = ?
+            """,
+            (cart_token, artikelname),
+        ).fetchone()
+
+    if not row:
+        return respond_error('Artikel ist nicht im Warenkorb.', status=404)
+
+    current_qty = Decimal(row['menge'])
+    einheit = row['einheit']
+    unit_price = Decimal(row['preis'])
+
+    if menge_raw:
+        try:
+            delta = parse_decimal(menge_raw, 'Menge', allow_negative=False)
+        except ValueError as exc:
+            return respond_error(str(exc))
+        menge_delta = -delta  # wir ziehen ab
+    else:
+        # komplette Menge entfernen
+        menge_delta = -current_qty
+
+    update_cart_item(
+        cart_token,
+        artikelname,
+        einheit,
+        unit_price,
+        menge_delta,
+    )
+
+    # aktualisierten Warenkorb zurückgeben (für AJAX)
+    cart_items = fetch_cart_items(cart_token)
+    return jsonify(cart_items_for_json(cart_items))
+
 
 @app.route('/add_artikel', methods=['POST'])
-@require_csrf
 def add_artikel():
     data = request.get_json(silent=True) or {}
-    artikelname = (data.get('artikelname') or '').strip()
+    artikelname = normalize_article_name(data.get('artikelname'))
     einheit = (data.get('einheit') or '').strip()
     preis_raw = data.get('preis')
 
@@ -932,22 +883,38 @@ def add_artikel():
 
     with db_connection(ARTICLE_DB) as conn:
         existing = conn.execute(
-            'SELECT 1 FROM artikel WHERE artikelname = ? COLLATE NOCASE', (artikelname,)
+            """
+            SELECT artikelname
+            FROM artikel
+            WHERE TRIM(artikelname) = ? COLLATE NOCASE
+            """,
+            (artikelname,),
         ).fetchone()
-        if existing:
-            return respond_error('Artikelname bereits vorhanden.')
 
-        conn.execute(
-            'INSERT INTO artikel (artikelname, einheit, preis) VALUES (?, ?, ?)',
-            (artikelname, einheit, float(quantize_currency(preis))),
-        )
+        if existing:
+            # UPSERT: vorhandenen Artikel updaten
+            conn.execute(
+                """
+                UPDATE artikel
+                SET artikelname = ?, einheit = ?, preis = ?
+                WHERE TRIM(artikelname) = ? COLLATE NOCASE
+                """,
+                (artikelname, einheit, float(quantize_currency(preis)), artikelname),
+            )
+            msg = 'Artikel aktualisiert.'
+        else:
+            conn.execute(
+                'INSERT INTO artikel (artikelname, einheit, preis) VALUES (?, ?, ?)',
+                (artikelname, einheit, float(quantize_currency(preis))),
+            )
+            msg = 'Artikel erfolgreich hinzugefügt.'
+
         conn.commit()
 
-    return jsonify({'success': True, 'message': 'Artikel erfolgreich hinzugefuegt'})
+    return jsonify({'success': True, 'message': msg})
 
 
 @app.route('/clear_cart', methods=['POST'])
-@require_csrf
 def clear_cart():
     cart_token = session.get('cart_token')
     clear_cart_items(cart_token)
@@ -956,7 +923,6 @@ def clear_cart():
 
 
 @app.route('/export_excel', methods=['POST'])
-@require_csrf
 def export_excel():
     kostenstelle_nummer = request.form.get('kostenstelle')
 
@@ -1037,11 +1003,9 @@ def export_excel():
 
 
 @app.route('/save_to_inventur', methods=['POST'])
-@require_csrf
 def save_to_inventur():
     kostenstelle_nummer = request.form.get('kostenstelle')
     jahr = get_active_inventur_year()
-
 
     if not kostenstelle_nummer:
         return respond_error('Kostenstellennummer ist erforderlich.')
@@ -1063,30 +1027,79 @@ def save_to_inventur():
 
     with db_connection(COST_CENTER_DB) as conn:
         for item in cart_items:
-            conn.execute(
-                'INSERT INTO inventur (kostenstelle, jahr, artikelname, einheit, menge, preis, gesamtpreis) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                (
-                    kostenstelle,
-                    jahr,
-                    item['artikelname'],
-                    item['einheit'],
-                    float(item['menge']),
-                    float(quantize_currency(item['preis'])),
-                    float(quantize_currency(item['gesamtpreis'])),
-                ),
-            )
+            artikelname = normalize_article_name(item['artikelname'])
+            einheit = (item['einheit'] or '').strip()
+            # cart_items sind schon Decimal -> hier sauber normalisieren/quantisieren
+            menge_neu = quantize_quantity(Decimal(item['menge']))
+            preis_neu = quantize_currency(Decimal(item['preis']))
+
+            # Prüfen, ob Eintrag schon existiert
+            existing = conn.execute(
+                """
+                SELECT rowid AS rid, menge, preis
+                FROM inventur
+                WHERE kostenstelle = ?
+                AND jahr = ?
+                AND TRIM(artikelname) = ? COLLATE NOCASE
+                AND einheit = ?
+                """,
+                (kostenstelle, jahr, artikelname, einheit),
+            ).fetchone()
+
+            if existing:
+                # Menge aufaddieren
+                alt_menge = normalize_decimal_value(existing['menge'], default=Decimal("0"))
+                neue_menge = quantize_quantity(alt_menge + menge_neu)
+                neue_gesamt = quantize_currency(neue_menge * preis_neu)
+
+                conn.execute(
+                    """
+                    UPDATE inventur
+                    SET menge = ?, preis = ?, gesamtpreis = ?
+                    WHERE rowid = ?
+                    """,
+                    (float(neue_menge), float(preis_neu), float(neue_gesamt), existing['rid']),
+                )
+            else:
+                # Neuer Eintrag
+                gesamt = quantize_currency(menge_neu * preis_neu)
+                conn.execute(
+                    """
+                    INSERT INTO inventur
+                    (kostenstelle, jahr, artikelname, einheit, menge, preis, gesamtpreis)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        kostenstelle,
+                        jahr,
+                        artikelname,
+                        einheit,
+                        float(menge_neu),
+                        float(preis_neu),
+                        float(gesamt),
+                    ),
+                )
+
         conn.commit()
 
-    audit_log('inventur_gespeichert', f'Kostenstelle: {kostenstelle}, Jahr: {jahr}, Artikel: {len(cart_items)}')
+    # Warenkorb leeren
     clear_cart_items(session.get('cart_token'))
     session['cart_token'] = uuid4().hex
+
+    # 👉 Bei AJAX-Call JSON zurückgeben
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return jsonify({'success': True, 'message': 'Inventur erfolgreich gespeichert.'})
+
+    # Fallback: klassisches Form-Submit → Redirect
     return redirect(url_for('index'))
 
 
+
+
 @app.route('/admin/apply_price_factor', methods=['POST'])
-@require_admin
-@require_csrf
 def apply_price_factor():
+    if not session.get('is_admin'):
+        return respond_error('Unbefugter Zugriff', status=403)
 
     data = request.get_json(silent=True) or {}
     factor_raw = data.get('factor')
@@ -1115,14 +1128,13 @@ def apply_price_factor():
             )
         conn.commit()
 
-    audit_log('preisfaktor_angewendet', f'Faktor: {factor}, Nachkommastellen: {rounding_places}')
     return jsonify({'success': True, 'message': 'Preise erfolgreich aktualisiert'})
 
 
 @app.route('/admin/year_end', methods=['POST'])
-@require_admin
-@require_csrf
 def perform_year_end():
+    if not session.get('is_admin'):
+        return respond_error('Unbefugter Zugriff', status=403)
 
     data = request.get_json(silent=True) or {}
     jahr_raw = data.get('jahr')
@@ -1201,21 +1213,24 @@ def perform_year_end():
     if jahr == active_year:
         try:
             set_active_inventur_year(jahr + 1)
-        except sqlite3.Error:
+        except Exception:
             app.logger.exception("Konnte active_inventur_year nicht setzen")
 
-    audit_log('jahresabschluss', f'Jahr: {jahr}')
     return jsonify({'success': True, 'message': 'Jahresabschluss erfolgreich durchgeführt'})
 
 
+
+
 @app.route('/update_article', methods=['POST'])
-@require_admin
-@require_csrf
 def update_article():
+    if not session.get('is_admin'):
+        return respond_error('Unbefugter Zugriff', status=403)
 
     data = request.get_json(silent=True) or {}
-    original_artikelname = (data.get('originalArticleName') or '').strip()
-    new_artikelname = (data.get('newArticleName') or '').strip()
+
+    # NEU: Namen normalisieren
+    original_artikelname = normalize_article_name(data.get('originalArticleName'))
+    new_artikelname = normalize_article_name(data.get('newArticleName'))
     new_einheit = (data.get('newUnit') or '').strip()
     new_price_raw = data.get('newPrice')
 
@@ -1229,7 +1244,11 @@ def update_article():
 
     with db_connection(ARTICLE_DB) as conn:
         conn.execute(
-            'UPDATE artikel SET artikelname = ?, einheit = ?, preis = ? WHERE artikelname = ? COLLATE NOCASE',
+            """
+            UPDATE artikel
+            SET artikelname = ?, einheit = ?, preis = ?
+            WHERE TRIM(artikelname) = ? COLLATE NOCASE
+            """,
             (
                 new_artikelname,
                 new_einheit,
@@ -1239,14 +1258,14 @@ def update_article():
         )
         conn.commit()
 
-    audit_log('artikel_aktualisiert', f'Alt: {original_artikelname}, Neu: {new_artikelname}')
     return jsonify({'success': True, 'message': 'Artikel erfolgreich aktualisiert'})
 
 
 @app.route('/delete_article', methods=['POST'])
-@require_admin
-@require_csrf
 def delete_article():
+    if not session.get('is_admin'):
+        return respond_error('Unbefugter Zugriff', status=403)
+
     artikelname = (request.get_json(silent=True) or {}).get('articleName', '').strip()
 
     if not artikelname:
@@ -1256,16 +1275,16 @@ def delete_article():
         conn.execute('DELETE FROM artikel WHERE artikelname = ? COLLATE NOCASE', (artikelname,))
         conn.commit()
 
-    audit_log('artikel_geloescht', f'Artikel: {artikelname}')
     return jsonify({'success': True, 'message': 'Artikel erfolgreich geloescht'})
 
 
 @app.route('/add_article', methods=['POST'])
-@require_admin
-@require_csrf
 def add_article():
+    if not session.get('is_admin'):
+        return respond_error('Unbefugter Zugriff', status=403)
+
     data = request.get_json(silent=True) or {}
-    artikelname = (data.get('name') or '').strip()
+    artikelname = normalize_article_name(data.get('name'))
     einheit = (data.get('einheit') or '').strip()
     preis_raw = data.get('preis')
 
@@ -1278,20 +1297,37 @@ def add_article():
         return respond_error(str(exc))
 
     with db_connection(ARTICLE_DB) as conn:
-        exists = conn.execute(
-            'SELECT 1 FROM artikel WHERE artikelname = ? COLLATE NOCASE', (artikelname,)
+        existing = conn.execute(
+            """
+            SELECT artikelname
+            FROM artikel
+            WHERE TRIM(artikelname) = ? COLLATE NOCASE
+            """,
+            (artikelname,),
         ).fetchone()
-        if exists:
-            return respond_error('Artikelname bereits vorhanden')
 
-        conn.execute(
-            'INSERT INTO artikel (artikelname, einheit, preis) VALUES (?, ?, ?)',
-            (artikelname, einheit, float(quantize_currency(preis))),
-        )
+        if existing:
+            # UPSERT: vorhandenen Artikel updaten
+            conn.execute(
+                """
+                UPDATE artikel
+                SET artikelname = ?, einheit = ?, preis = ?
+                WHERE TRIM(artikelname) = ? COLLATE NOCASE
+                """,
+                (artikelname, einheit, float(quantize_currency(preis)), artikelname),
+            )
+            msg = 'Artikel aktualisiert.'
+        else:
+            conn.execute(
+                'INSERT INTO artikel (artikelname, einheit, preis) VALUES (?, ?, ?)',
+                (artikelname, einheit, float(quantize_currency(preis))),
+            )
+            msg = 'Artikel erfolgreich hinzugefügt.'
+
         conn.commit()
 
-    audit_log('artikel_hinzugefuegt', f'Artikel: {artikelname}, Einheit: {einheit}')
-    return jsonify({'success': True, 'message': 'Artikel erfolgreich hinzugefuegt'})
+    return jsonify({'success': True, 'message': msg})
+
 
 
 @app.route('/uebersicht_inventur')
@@ -1314,7 +1350,7 @@ def uebersicht_inventur():
                     (selected_year,),
                 ).fetchall()
             else:
-                # Alle Jahre (default, rückwärtskompatibel)
+                # Alle Jahre
                 rows = conn.execute(
                     "SELECT rowid as _rid, * FROM inventur ORDER BY kostenstelle, jahr, artikelname"
                 ).fetchall()
@@ -1343,7 +1379,6 @@ def uebersicht_inventur():
 
 
 @app.route('/export_inventur_selection', methods=['POST'])
-@require_csrf
 def export_inventur_selection():
     # Eingaben
     jahr_param = (request.form.get('jahr') or '').strip()
@@ -1472,94 +1507,6 @@ def export_inventur_selection():
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
 
-
-
-@app.route('/export_inventur', methods=['POST'])
-@require_csrf
-def export_inventur():
-    """Vollständiger Export aller Inventurdaten (alle Kostenstellen)."""
-    jahr_param = (request.form.get('jahr') or '').strip()
-    selected_year = None
-    if jahr_param and jahr_param.lower() != 'all':
-        try:
-            selected_year = int(jahr_param)
-        except ValueError:
-            selected_year = None
-    return _export_inventur_core(selected_year=selected_year, kst_filter=None)
-
-
-def _export_inventur_core(selected_year, kst_filter):
-    """Erstellt den Excel-Export für die angegebenen Filter."""
-    base_sql = ('SELECT kostenstelle, jahr, artikelname, einheit, menge, preis, gesamtpreis '
-                'FROM inventur')
-    conds, params = [], []
-    if selected_year is not None:
-        conds.append('jahr = ?')
-        params.append(selected_year)
-    if kst_filter:
-        placeholders = ','.join(['?'] * len(kst_filter))
-        conds.append(f'kostenstelle IN ({placeholders})')
-        params.extend(kst_filter)
-    where = (' WHERE ' + ' AND '.join(conds)) if conds else ''
-    order = ' ORDER BY kostenstelle, jahr, artikelname'
-
-    with db_connection(COST_CENTER_DB) as conn:
-        rows = conn.execute(base_sql + where + order, tuple(params)).fetchall()
-
-    gruppierte = group_inventur_rows(rows)
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = 'Inventurdaten'
-    bold_font = Font(bold=True)
-    header_fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
-    currency_format = 'EUR #,##0.00'
-    gesamtsumme_aller = Decimal('0')
-
-    for kostenstelle, details in gruppierte.items():
-        ws.append([kostenstelle])
-        ws.cell(row=ws.max_row, column=1).font = bold_font
-        ws.append(['Jahr', 'Artikelname', 'Menge', 'Einheit', 'Preis', 'Gesamtpreis'])
-        for cell in ws[ws.max_row]:
-            cell.font = bold_font
-            cell.fill = header_fill
-            cell.alignment = Alignment(horizontal='center')
-        for material in details['materialien']:
-            ws.append([
-                material.get('jahr'), material.get('artikelname'), material.get('menge'),
-                material.get('einheit'), material.get('preis'), material.get('gesamtpreis'),
-            ])
-        gesamt = quantize_currency(details['gesamtsumme'])
-        ws.append(['', '', '', '', 'Gesamt:', float(gesamt)])
-        ws.cell(row=ws.max_row, column=5).font = bold_font
-        ws.cell(row=ws.max_row, column=6).font = bold_font
-        gesamtsumme_aller += gesamt
-
-    ws.append(['', '', '', '', 'Gesamtsumme aller Kostenstellen:', float(quantize_currency(gesamtsumme_aller))])
-    for cell in ws[ws.max_row]:
-        cell.font = bold_font
-
-    for col_index in range(1, ws.max_column + 1):
-        col_letter = get_column_letter(col_index)
-        max_len = max((len(str(c.value)) for c in ws[col_letter] if c.value is not None), default=0)
-        ws.column_dimensions[col_letter].width = min(max_len + 2, 40)
-        if col_letter in {'E', 'F'}:
-            for cell in ws[col_letter]:
-                cell.number_format = currency_format
-
-    fname = 'Inventur_Komplett'
-    if selected_year is not None:
-        fname += f'_{selected_year}'
-    fname += '.xlsx'
-
-    output = io.BytesIO()
-    wb.save(output)
-    output.seek(0)
-    return send_file(
-        output,
-        as_attachment=True,
-        download_name=fname,
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    )
 
 
 def fetch_available_years():
