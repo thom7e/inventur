@@ -1,4 +1,4 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}Inventur Verwaltung{% endblock %}
 
 {% block page_header %}
@@ -19,65 +19,39 @@
             <form id="priceFactorForm">
                 <div class="form-group">
                     <label for="priceFactor">Faktor (z. B. 1.05 für +5&nbsp;%)</label>
-                    <input type="number" class="form-control form-control-lg" id="priceFactor" name="factor" step="0.001" min="0" required>
+                    <input type="number" class="form-control" id="priceFactor" name="factor" step="0.001" min="0" required>
                 </div>
                 <div class="form-group">
                     <label for="roundingPlaces">Nachkommastellen</label>
-                    <select class="form-control form-control-lg" id="roundingPlaces" name="rounding_places">
+                    <select class="form-control" id="roundingPlaces" name="rounding_places">
                         <option value="0">0</option>
                         <option value="2" selected>2</option>
                         <option value="3">3</option>
                         <option value="4">4</option>
                     </select>
                 </div>
-                <button type="submit" class="btn btn-custom btn-lg">Faktor anwenden</button>
+                <button type="submit" class="btn btn-custom">Faktor anwenden</button>
             </form>
         </div>
         <div class="col-lg-6">
-            <h2 class="h4">Jahresabschluss / Neue Kostenstellen</h2>
-                <form id="yearEndForm">
-                    <div class="form-group">
-                        <label for="yearEndYear">Jahr archivieren</label>
-                        <select class="form-control form-control-lg" id="yearEndYear" name="jahr" required>
-                            {% for y in closable_years %}
-                                <option value="{{ y }}" {{ 'selected' if y == active_inventur_year else '' }}>
-                                    {{ y }}{% if y == active_inventur_year %} (aktives Jahr){% endif %}
-                                </option>
-                            {% endfor %}
-                        </select>
-                        <small class="form-text text-muted">
-                            Aktives Inventurjahr: <strong>{{ active_inventur_year }}</strong>
-                        </small>
-                    </div>
-
-                    <div class="form-group" id="yearEndKstGroup">
-                        <label for="yearEndData">Neue Kostenstellen (nur fürs aktive Jahr; eine pro Zeile, Format: <code>Nummer;Bezeichnung</code>)</label>
-                        <textarea class="form-control" id="yearEndData" name="kostenstellen" rows="6"
-                                placeholder="1001;Bauhof&#10;1002;Fuhrpark"></textarea>
-                        <small class="form-text text-muted">Dieses Feld ist nur relevant, wenn das aktive Jahr archiviert wird.</small>
-                    </div>
-                    <button type="button" class="btn btn-secondary btn-lg mt-2" id="bulkAddCostCentersBtn">
-                        Kostenstellen aus Feld hinzufügen (mehrere)
-                    </button>
+            <h2 class="h4">Jahresabschluss</h2>
+            <form id="yearEndForm">
+                <div class="form-group">
+                    <label for="yearEndYear">Jahr archivieren</label>
+                    <select class="form-control" id="yearEndYear" name="jahr" required>
+                        {% for y in closable_years %}
+                            <option value="{{ y }}" {{ 'selected' if y == active_inventur_year else '' }}>
+                                {{ y }}{% if y == active_inventur_year %} (aktives Jahr){% endif %}
+                            </option>
+                        {% endfor %}
+                    </select>
                     <small class="form-text text-muted">
-                        Fügt alle oben eingegebenen Kostenstellen zur aktiven Liste hinzu (ohne Jahresabschluss). Duplikate werden übersprungen.
+                        Aktives Inventurjahr: <strong>{{ active_inventur_year }}</strong>.
+                        Kostenstellen kommen automatisch aus dem Urlaubsplaner und werden beim Abschluss ins Archiv übernommen.
                     </small>
-                    <button type="button" class="btn btn-secondary btn-lg mt-3" id="addCostCenterBtn">
-                        einzelne Kostenstelle hinzufügen
-                    </button>
-                    <small class="form-text text-muted">
-                        Fügt eine Kostenstelle zur aktuellen aktiven Liste hinzu (nicht zum Archiv).
-                    </small>
-
-                    <button type="submit" class="btn btn-custom btn-lg">Jahresabschluss durchführen</button>
-                </form>
-                <!-- unterhalb vom yearEndForm -->
-                <button type="button" class="btn btn-outline-danger btn-lg mt-3" id="clearCostCentersBtn">
-                    Kostenstellen leeren
-                </button>
-                <small class="form-text text-muted">
-                    Löscht die aktuelle Kostenstellenliste (nicht das Archiv). Passwort erforderlich.
-</small>
+                </div>
+                <button type="submit" class="btn btn-custom">Jahresabschluss durchführen</button>
+            </form>
         </div>
     </div>
 </section>
@@ -90,7 +64,7 @@
         </div>
         <div class="form-group mb-0 w-100 w-md-50">
             <label class="sr-only" for="searchInput">Artikel suchen</label>
-            <input type="search" class="form-control form-control-lg" placeholder="Artikelname" id="searchInput">
+            <input type="search" class="form-control" placeholder="Artikelname" id="searchInput">
         </div>
     </div>
     <div id="admin-search-results" class="admin-search-results mb-4">
@@ -443,22 +417,13 @@
             yearEndForm.addEventListener('submit', function (event) {
                 event.preventDefault();
                 var jahr = document.getElementById('yearEndYear').value;
-                var rawText = document.getElementById('yearEndData').value;
-
-                var kostenstellen;
-                try {
-                    kostenstellen = parseKostenstellenText(rawText);
-                } catch (error) {
-                    window.showToast(error.message, 'error');
-                    return;
-                }
 
                 fetch('/admin/year_end', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ jahr: jahr, kostenstellen: kostenstellen })
+                    body: JSON.stringify({ jahr: jahr })
                 })
                 .then(window.handleJsonResponse)
                 .then(function (data) {
@@ -469,132 +434,9 @@
                 });
             });
         }
-        // ---- Year-End: KSt-Feld nur fürs aktive Jahr zulassen ----
-        var yearEndYearSel = document.getElementById('yearEndYear');
-        var yearEndData = document.getElementById('yearEndData');
-        var yearEndKstGroup = document.getElementById('yearEndKstGroup');
-        var ACTIVE_YEAR = {{ active_inventur_year|int }};
-
-        function syncKstField() {
-            var y = parseInt(yearEndYearSel.value, 10);
-            var isActive = (y === ACTIVE_YEAR);
-            yearEndData.disabled = !isActive;
-            yearEndData.required = isActive;
-            yearEndKstGroup.style.opacity = isActive ? '1' : '0.5';
-        }
-        if (yearEndYearSel && yearEndData) {
-            syncKstField();
-            yearEndYearSel.addEventListener('change', syncKstField);
-        }
-
-        // im yearEndForm-Submit bleibt dein existierender Code – er schickt die Daten zum Backend.
-        // Das Backend lehnt "kostenstellen" ab, wenn jahr != active year (s. perform_year_end).
-
-        // ---- Kostenstellen leeren (mit Passwortabfrage) ----
-        var clearBtn = document.getElementById('clearCostCentersBtn');
-        if (clearBtn) {
-            clearBtn.addEventListener('click', function () {
-                var pwd = window.prompt('Bitte Admin-Passwort eingeben, um ALLE Kostenstellen zu löschen:');
-                if (!pwd) return;
-                if (!window.confirm('Sicher? Diese Aktion kann nicht rückgängig gemacht werden.')) return;
-
-                fetch('/admin/clear_cost_centers', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ password: pwd })
-                })
-                .then(window.handleJsonResponse)
-                .then(function (data) {
-                    window.showToast(data.message || 'Kostenstellen geleert.', 'success');
-                    setTimeout(function () { window.location.reload(); }, 700);
-                })
-                .catch(function () {
-                    /* Fehlertoast wird bereits zentral gehandhabt */
-                });
-            });
-        }
-        // ---- Einzelne Kostenstelle hinzufügen ----
-        var addCcBtn = document.getElementById('addCostCenterBtn');
-        if (addCcBtn) {
-            addCcBtn.addEventListener('click', function () {
-                var nummer = window.prompt('Kostenstellen-Nummer:');
-                if (!nummer || !nummer.trim()) return;
-
-                var bezeichnung = window.prompt('Bezeichnung:');
-                if (!bezeichnung || !bezeichnung.trim()) return;
-
-                fetch('/admin/add_cost_center', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        nummer: nummer.trim(),
-                        bezeichnung: bezeichnung.trim()
-                    })
-                })
-                .then(window.handleJsonResponse)
-                .then(function (data) {
-                    window.showToast(data.message || 'Kostenstelle hinzugefügt.', 'success');
-                    setTimeout(function(){ window.location.reload(); }, 700);
-                })
-                .catch(function(){
-                    /* Fehlertoast wird zentral gehandhabt */
-                });
-            });
-        }
-
-        // ---- Bulk-Add: Kostenstellen aus Textfeld übernehmen (ohne Jahresabschluss) ----
-        var bulkBtn = document.getElementById('bulkAddCostCentersBtn');
-        if (bulkBtn) {
-            bulkBtn.addEventListener('click', function () {
-                var txtEl = document.getElementById('yearEndData');
-                if (!txtEl) {
-                    window.showToast && window.showToast('Textfeld nicht gefunden.', 'error');
-                    return;
-                }
-                var raw = txtEl.value || '';
-                if (!raw.trim()) {
-                    window.showToast && window.showToast('Bitte Einträge im Feld hinterlegen.', 'error');
-                    return;
-                }
-
-                var entries;
-                try {
-                    entries = parseKostenstellenText(raw); // nutzt deine bestehende Funktion
-                } catch (err) {
-                    window.showToast && window.showToast(err.message || 'Ungültiges Format.', 'error');
-                    return;
-                }
-
-                fetch('/admin/bulk_add_cost_centers', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ kostenstellen: entries })
-                })
-                .then(window.handleJsonResponse)
-                .then(function (data) {
-                    window.showToast && window.showToast(data.message || 'Kostenstellen übernommen.', 'success');
-                    setTimeout(function(){ window.location.reload(); }, 700);
-                })
-                .catch(function () {
-                    /* Fehlertoast wird zentral gehandhabt */
-                });
-            });
-        }
-
-
 
     })();
 </script>
-
-<form id="adminSearchForm" method="post" action="{{ url_for('admin_search') }}" autocomplete="off">
-    <input type="text" name="search_query" id="search_query" class="form-control" placeholder="Artikel suchen">
-</form>
-
-<div id="admin-search-results" class="search-results">
-    <!-- Ergebnisse landen hier -->
-</div>
-
-<script src="{{ url_for('static', filename='admin_search.js') }}"></script>
 
 {% endblock %}
 

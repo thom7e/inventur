@@ -136,14 +136,8 @@ def ensure_cost_center_archive_table() -> None:
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_kostenstellen_archive_jahr ON kostenstellen_archive(archiv_jahr)")
 
-        # Archiv schreibschützen
-        conn.execute("""
-            CREATE TRIGGER IF NOT EXISTS ro_kst_arch_ins
-            BEFORE INSERT ON kostenstellen_archive
-            BEGIN
-                SELECT RAISE(ABORT, 'kostenstellen_archive ist schreibgeschützt');
-            END;
-        """)
+        # Archiv: nachträglich weder ändern noch löschen
+        conn.execute("DROP TRIGGER IF EXISTS ro_kst_arch_ins")  # Jahresabschluss muss einfügen dürfen
         conn.execute("""
             CREATE TRIGGER IF NOT EXISTS ro_kst_arch_upd
             BEFORE UPDATE ON kostenstellen_archive
@@ -200,6 +194,30 @@ def get_active_inventur_year() -> int:
 
     # 3) letzter Fallback: Kalenderjahr
     return datetime.now().year
+
+
+def get_meta(key: str):
+    with db_connection(COST_CENTER_DB) as conn:
+        row = conn.execute("SELECT value FROM app_meta WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_meta(key: str, value) -> None:
+    with db_connection(COST_CENTER_DB) as conn:
+        conn.execute(
+            "INSERT INTO app_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, str(value)),
+        )
+        conn.commit()
+
+
+def replace_local_kostenstellen(rows) -> None:
+    with db_connection(COST_CENTER_DB) as conn:
+        conn.execute('DELETE FROM kostenstellen')
+        conn.executemany(
+            'INSERT INTO kostenstellen (kostenstellen_nummer, kostenstellen_bezeichnung) VALUES (?, ?)', rows
+        )
+        conn.commit()
 
 
 def set_active_inventur_year(year: int) -> None:
@@ -292,6 +310,10 @@ def article_rows_to_payload(rows):
 def fetch_kostenstellen():
     nc_rows = fetch_nc_kostenstellen()
     if nc_rows is not None:
+        # lokale Kopie (Archiv-Quelle) erst nach dem ersten Jahresabschluss mit API mitführen
+        if get_meta('kst_mirror_year') == str(get_active_inventur_year()) and nc_rows != _kst_mirrored.get('rows'):
+            replace_local_kostenstellen(nc_rows)
+            _kst_mirrored['rows'] = nc_rows
         return [{"kostenstellen_nummer": n, "kostenstellen_bezeichnung": b} for n, b in nc_rows]
     with db_connection(COST_CENTER_DB) as conn:
         return conn.execute(
@@ -572,6 +594,7 @@ INVENTUR_API_TOKEN = os.getenv("INVENTUR_API_TOKEN", "")
 NC_ENABLED = bool(NC_BASE_URL and NC_CLIENT_ID and NC_CLIENT_SECRET)
 OPEN_ENDPOINTS = {'login', 'logout', 'oauth_start', 'oauth_callback', 'static'}
 _kst_cache = {'ts': 0.0, 'rows': None}
+_kst_mirrored = {'rows': None}
 
 
 def fetch_nc_kostenstellen():
@@ -733,106 +756,6 @@ def admin():
         active_inventur_year=active_year,   # <-- neu
         closable_years=closable_years       # <-- neu
     )
-
-@app.route('/admin/clear_cost_centers', methods=['POST'])
-def admin_clear_cost_centers():
-    if not session.get('is_admin'):
-        return respond_error('Unbefugter Zugriff', status=403)
-
-    with db_connection(COST_CENTER_DB) as conn:
-        cur = conn.execute('DELETE FROM kostenstellen')
-        deleted = cur.rowcount if hasattr(cur, 'rowcount') else None
-        conn.commit()
-
-    msg = 'Kostenstellen wurden geleert.'
-    if isinstance(deleted, int) and deleted >= 0:
-        msg = f'Kostenstellen wurden geleert ({deleted} Einträge).'
-    return jsonify({'success': True, 'message': msg})
-
-
-@app.route('/admin/add_cost_center', methods=['POST'])
-def admin_add_cost_center():
-    if not session.get('is_admin'):
-        return respond_error('Unbefugter Zugriff', status=403)
-
-    data = request.get_json(silent=True) or {}
-    nummer = (data.get('nummer') or '').strip()
-    bezeichnung = (data.get('bezeichnung') or '').strip()
-
-    if not nummer or not bezeichnung:
-        return respond_error('Nummer und Bezeichnung sind erforderlich.')
-
-    # optional: simple Normalisierung
-    nummer_norm = nummer  # z.B. nummer.upper() wenn du es willst
-
-    with db_connection(COST_CENTER_DB) as conn:
-        # Prüfe Duplikate (case-insensitive)
-        exists = conn.execute(
-            'SELECT 1 FROM kostenstellen WHERE kostenstellen_nummer = ? COLLATE NOCASE',
-            (nummer_norm,)
-        ).fetchone()
-        if exists:
-            return respond_error('Diese Kostenstellen-Nummer existiert bereits.')
-
-        conn.execute(
-            'INSERT INTO kostenstellen (kostenstellen_nummer, kostenstellen_bezeichnung) VALUES (?, ?)',
-            (nummer_norm, bezeichnung)
-        )
-        conn.commit()
-
-    return jsonify({'success': True, 'message': f'Kostenstelle {nummer_norm} hinzugefügt.'})
-
-@app.route('/admin/bulk_add_cost_centers', methods=['POST'])
-def admin_bulk_add_cost_centers():
-    if not session.get('is_admin'):
-        return respond_error('Unbefugter Zugriff', status=403)
-
-    data = request.get_json(silent=True) or {}
-    entries = data.get('kostenstellen', [])
-    if not isinstance(entries, list) or not entries:
-        return respond_error('Keine Kostenstellen übermittelt.')
-
-    # Payload validieren & in (nummer, bezeichnung) normalisieren
-    cleaned = []
-    seen = set()
-    for e in entries:
-        nummer = (e.get('nummer') or '').strip()
-        bezeichnung = (e.get('bezeichnung') or '').strip()
-        if not nummer or not bezeichnung:
-            return respond_error('Jede Zeile benötigt "Nummer" und "Bezeichnung".')
-        key = nummer.lower()
-        if key in seen:
-            # Duplikate innerhalb der Liste ignorieren
-            continue
-        seen.add(key)
-        cleaned.append((nummer, bezeichnung))
-
-    if not cleaned:
-        return respond_error('Keine neuen Kostenstellen nach Bereinigung.')
-
-    added, skipped = 0, 0
-    with db_connection(COST_CENTER_DB) as conn:
-        for nummer, bezeichnung in cleaned:
-            # existiert schon?
-            row = conn.execute(
-                'SELECT 1 FROM kostenstellen WHERE kostenstellen_nummer = ? COLLATE NOCASE',
-                (nummer,)
-            ).fetchone()
-            if row:
-                skipped += 1
-                continue
-            conn.execute(
-                'INSERT INTO kostenstellen (kostenstellen_nummer, kostenstellen_bezeichnung) VALUES (?, ?)',
-                (nummer, bezeichnung)
-            )
-            added += 1
-        conn.commit()
-
-    msg = f'{added} Kostenstellen hinzugefügt'
-    if skipped:
-        msg += f', {skipped} übersprungen (bereits vorhanden)'
-    return jsonify({'success': True, 'message': msg, 'added': added, 'skipped': skipped})
-
 
 @app.route('/admin/inventur/update_row', methods=['POST'])
 def admin_update_inventur_row():
@@ -1364,60 +1287,23 @@ def perform_year_end():
         return respond_error('Unbefugter Zugriff', status=403)
 
     data = request.get_json(silent=True) or {}
-    jahr_raw = data.get('jahr')
-    kostenstellen = data.get('kostenstellen', [])
-
     try:
-        jahr = int(str(jahr_raw).strip())
+        jahr = int(str(data.get('jahr')).strip())
     except (TypeError, ValueError):
         return respond_error('Bitte eine gültige Jahreszahl angeben.')
 
     active_year = get_active_inventur_year()
-    existing_years = set(fetch_available_years())
-    archived_years = set(fetch_archived_years())
-
-    # nur Jahre, die es gibt und noch nicht archiviert sind
-    if jahr not in existing_years or jahr in archived_years:
+    if jahr not in set(fetch_available_years()) or jahr in set(fetch_archived_years()):
         return respond_error('Dieses Jahr kann nicht abgeschlossen werden (existiert nicht oder ist bereits archiviert).')
 
-    # neue Kostenstellen NUR fürs aktive Jahr zulassen
-    if jahr != active_year:
-        if kostenstellen:
-            return respond_error('Neue Kostenstellen dürfen nur für das aktive Jahr angegeben werden.')
-        # für Nicht-Aktivjahr: leere Liste setzen, damit unten keine Fehler kommen
-        kostenstellen = []
-
-    # ab hier: bisherige Logik, aber "kostenstellen" kann leer sein
-    if jahr == active_year:
-        if not isinstance(kostenstellen, list) or not kostenstellen:
-            return respond_error('Neue Kostenstellen werden benötigt (für das aktive Jahr).')
-
-        parsed_entries = []
-        seen_numbers = set()
-        for entry in kostenstellen:
-            nummer = (entry.get('nummer') or '').strip()
-            bezeichnung = (entry.get('bezeichnung') or '').strip()
-            if not nummer or not bezeichnung:
-                return respond_error('Jede Kostenstelle benötigt Nummer und Bezeichnung.')
-            if nummer in seen_numbers:
-                return respond_error(f'Kostenstelle {nummer} ist mehrfach vorhanden.')
-            seen_numbers.add(nummer)
-            parsed_entries.append((nummer, bezeichnung))
-    else:
-        parsed_entries = []  # keine neuen KSt. für Nicht-Aktivjahr
-
     ensure_cost_center_archive_table()
+    neue_kst = fetch_nc_kostenstellen()
+    if jahr == active_year and neue_kst is None:
+        return respond_error('Kostenstellen aus dem Urlaubsplaner nicht abrufbar - Jahresabschluss abgebrochen.', 502)
 
-    
     with db_connection(COST_CENTER_DB) as conn:
-        existing = conn.execute(
-            'SELECT 1 FROM kostenstellen_archive WHERE archiv_jahr = ? LIMIT 1',
-            (jahr,),
-        ).fetchone()
-        if existing:
+        if conn.execute('SELECT 1 FROM kostenstellen_archive WHERE archiv_jahr = ? LIMIT 1', (jahr,)).fetchone():
             return respond_error('Für dieses Jahr besteht bereits ein Archiv.')
-
-        # akt. KSt. archivieren (immer)
         conn.execute(
             """
             INSERT INTO kostenstellen_archive (archiv_jahr, kostenstellen_nummer, kostenstellen_bezeichnung)
@@ -1425,27 +1311,15 @@ def perform_year_end():
             """,
             (jahr,),
         )
-
-        if jahr == active_year:
-            # nur fürs aktive Jahr: KSt. ersetzen
-            conn.execute('DELETE FROM kostenstellen')
-            conn.executemany(
-                'INSERT INTO kostenstellen (kostenstellen_nummer, kostenstellen_bezeichnung) VALUES (?, ?)',
-                parsed_entries,
-            )
-
         conn.commit()
 
-    # nur wenn aktives Jahr abgeschlossen wird → auf nächstes Jahr umschalten
     if jahr == active_year:
-        try:
-            set_active_inventur_year(jahr + 1)
-        except Exception:
-            app.logger.exception("Konnte active_inventur_year nicht setzen")
+        replace_local_kostenstellen(neue_kst)
+        _kst_mirrored['rows'] = neue_kst
+        set_meta('kst_mirror_year', jahr + 1)
+        set_active_inventur_year(jahr + 1)
 
     return jsonify({'success': True, 'message': 'Jahresabschluss erfolgreich durchgeführt'})
-
-
 
 
 @app.route('/update_article', methods=['POST'])
