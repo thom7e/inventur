@@ -13,6 +13,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import openpyxl
 from flask import (
     Flask,
+    g,
     Response,
     jsonify,
     redirect,
@@ -456,6 +457,10 @@ COST_CENTER_DB = os.getenv("COST_CENTER_DB_PATH", "kostenstellen_db.db")
 CURRENCY_QUANTIZER = Decimal("0.01")
 QUANTITY_QUANTIZER = Decimal("0.001")
 
+CART_COOKIE = 'inv_cart'
+CART_COOKIE_MAX_AGE = 90 * 24 * 3600
+KST_COOKIE = 'inv_kst'
+
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 _admin_password_hash = os.getenv("ADMIN_PASSWORD_HASH")
 if not _admin_password_hash:
@@ -543,8 +548,18 @@ def audit_admin_actions(response):
 @app.before_request
 def persist_session() -> None:
     session.permanent = True
-    if "cart_token" not in session:
-        session["cart_token"] = uuid4().hex
+    g.cart_token = request.cookies.get(CART_COOKIE) or ''
+    g.new_cart_cookie = not g.cart_token
+    if g.new_cart_cookie:
+        g.cart_token = uuid4().hex
+
+
+@app.after_request
+def set_cart_cookie(response):
+    if g.get('new_cart_cookie'):
+        response.set_cookie(CART_COOKIE, g.cart_token, max_age=CART_COOKIE_MAX_AGE,
+                            httponly=True, samesite='Lax')
+    return response
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -559,7 +574,6 @@ def login():
         else:
             session.clear()
             session['is_admin'] = True
-            session['cart_token'] = uuid4().hex
             audit_log('admin_login', f'Benutzer: {username}')
             return redirect(url_for('admin'))
     return render_template('login.html', error=error)
@@ -773,13 +787,13 @@ def admin_delete_inventur_row():
 
 @app.route('/get_cart')
 def get_cart():
-    cart_items = fetch_cart_items(session.get('cart_token'))
+    cart_items = fetch_cart_items(g.cart_token)
     return jsonify(cart_items_for_json(cart_items))
 
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    cart_token = session.get('cart_token')
+    cart_token = g.cart_token
     cart_items = fetch_cart_items(cart_token)
     cart_template_items = cart_items_for_template(cart_items)
 
@@ -787,7 +801,7 @@ def index():
     rows = fetch_kostenstellen()
     kostenstellen = [(r["kostenstellen_nummer"], r["kostenstellen_bezeichnung"]) for r in rows]
 
-    selected_cost_center = request.form.get('kostenstelle') if request.method == 'POST' else None
+    selected_cost_center = (request.form.get('kostenstelle') if request.method == 'POST' else None) or request.cookies.get(KST_COOKIE)
     search_query = request.form.get('search_query', '').strip() if request.method == 'POST' else ''
 
     # >>> diese beiden IMMER definieren
@@ -810,6 +824,50 @@ def index():
         cart=cart_template_items,
         active_inventur_year=get_active_inventur_year(),
     )
+
+
+@app.route('/set_kostenstelle', methods=['POST'])
+def set_kostenstelle():
+    nummer = (request.form.get('kostenstelle') or '').strip()
+    resp = jsonify({'success': True})
+    resp.set_cookie(KST_COOKIE, nummer, max_age=CART_COOKIE_MAX_AGE, samesite='Lax')
+    return resp
+
+
+@app.route('/recent_articles')
+def recent_articles():
+    nummer = (request.args.get('kostenstelle') or '').strip()
+    if not nummer:
+        return jsonify([])
+    with db_connection(COST_CENTER_DB) as conn:
+        rows = conn.execute(
+            """
+            SELECT artikelname, einheit, MAX(rowid) AS last_id
+            FROM inventur
+            WHERE jahr = ? AND kostenstelle LIKE ?
+            GROUP BY artikelname, einheit
+            ORDER BY last_id DESC
+            LIMIT 8
+            """,
+            (get_active_inventur_year(), nummer + '-%'),
+        ).fetchall()
+    return jsonify([{'artikelname': r['artikelname'], 'einheit': r['einheit']} for r in rows])
+
+
+@app.route('/existing_counts')
+def existing_counts():
+    nummer = (request.args.get('kostenstelle') or '').strip()
+    if not nummer:
+        return jsonify({})
+    with db_connection(COST_CENTER_DB) as conn:
+        rows = conn.execute(
+            """
+            SELECT artikelname, menge FROM inventur
+            WHERE jahr = ? AND kostenstelle LIKE ?
+            """,
+            (get_active_inventur_year(), nummer + '-%'),
+        ).fetchall()
+    return jsonify({r['artikelname'].strip().casefold(): r['menge'] for r in rows})
 
 
 @app.route('/search', methods=['POST'])
@@ -862,7 +920,7 @@ def add_to_cart():
     if not article:
         return respond_error('Artikel wurde nicht gefunden.', 404)
 
-    cart_token = session['cart_token']
+    cart_token = g.cart_token
     unit_price = Decimal(str(article['preis']))
     update_cart_item(cart_token, article['artikelname'], article['einheit'], unit_price, menge)
 
@@ -883,7 +941,7 @@ def remove_from_cart():
     if not artikelname:
         return respond_error('Artikelname ist erforderlich.')
 
-    cart_token = session.get('cart_token')
+    cart_token = g.cart_token
     if not cart_token:
         return respond_error('Kein Warenkorb gefunden.')
 
@@ -977,9 +1035,8 @@ def add_artikel():
 
 @app.route('/clear_cart', methods=['POST'])
 def clear_cart():
-    cart_token = session.get('cart_token')
+    cart_token = g.cart_token
     clear_cart_items(cart_token)
-    session['cart_token'] = uuid4().hex
     return redirect(url_for('index'))
 
 
@@ -999,7 +1056,7 @@ def export_excel():
     if not kostenstelle_bezeichnung:
         return respond_error('Keine gültige Kostenstellenbezeichnung gefunden.', 404)
 
-    cart_items = fetch_cart_items(session.get('cart_token'))
+    cart_items = fetch_cart_items(g.cart_token)
     if not cart_items:
         return respond_error('Warenkorb ist leer.', 400)
 
@@ -1080,7 +1137,7 @@ def save_to_inventur():
     if not kostenstelle_bezeichnung:
         return respond_error('Keine gültige Kostenstellenbezeichnung gefunden.', 404)
 
-    cart_items = fetch_cart_items(session.get('cart_token'))
+    cart_items = fetch_cart_items(g.cart_token)
     if not cart_items:
         return respond_error('Warenkorb ist leer.', 400)
 
@@ -1144,8 +1201,7 @@ def save_to_inventur():
         conn.commit()
 
     # Warenkorb leeren
-    clear_cart_items(session.get('cart_token'))
-    session['cart_token'] = uuid4().hex
+    clear_cart_items(g.cart_token)
 
     # 👉 Bei AJAX-Call JSON zurückgeben
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
@@ -1439,6 +1495,7 @@ def uebersicht_inventur():
 
 
 
+@app.route('/export_inventur', methods=['POST'])
 @app.route('/export_inventur_selection', methods=['POST'])
 def export_inventur_selection():
     # Eingaben

@@ -14,6 +14,23 @@
 {% block content %}
 
 <section class="section-card">
+    <h2>Kostenstelle</h2>
+    <label class="sr-only" for="kostenstelle">Kostenstelle</label>
+    <select class="form-control form-control-lg" id="kostenstelle" name="kostenstelle" form="saveToInventurForm" required>
+        <option value="">Bitte Kostenstelle wählen</option>
+        {% for nummer, bezeichnung in kostenstellen %}
+        <option value="{{ nummer }}" {% if nummer == ausgewaehlte_kostenstelle %}selected{% endif %}>
+          {{ nummer }} - {{ bezeichnung }}
+        </option>
+        {% endfor %}
+    </select>
+    <div id="recent-articles" class="mt-3" style="display:none">
+        <small class="text-muted d-block mb-1">Zuletzt gezählt in dieser Kostenstelle</small>
+        <div id="recent-chips"></div>
+    </div>
+</section>
+
+<section class="section-card" id="addArticleCard">
     <h2>Neuen Artikel hinzufügen</h2>
     <form id="addArticleForm" class="form-row align-items-end">
         <div class="form-group col-lg-5">
@@ -124,16 +141,6 @@
   <div class="row">
     <div class="col-md-12">
       <form id="saveToInventurForm" method="post" action="{{ url_for('save_to_inventur') }}">
-        <div class="form-group mb-3">
-          <label for="kostenstelle">Kostenstelle in Inventur übernehmen</label>
-          <select class="form-control form-control-lg" id="kostenstelle" name="kostenstelle" required>
-            {% for nummer, bezeichnung in kostenstellen %}
-            <option value="{{ nummer }}" {% if nummer == ausgewaehlte_kostenstelle %}selected{% endif %}>
-              {{ nummer }} - {{ bezeichnung }}
-            </option>
-            {% endfor %}
-          </select>
-        </div>
         <button type="submit" class="btn btn-custom btn-lg btn-block">
             In Inventur speichern
         </button>
@@ -250,8 +257,10 @@
         if (!searchResultsContainer) return;
         var list = normalizeResults(results);
         if (!list.length) {
+            var q = searchInput ? searchInput.value.trim() : '';
             searchResultsContainer.innerHTML =
-                '<p class="text-muted mb-0">Keine Treffer.</p>';
+                '<p class="text-muted mb-2">Keine Treffer für „' + escapeHtml(q) + '“.</p>' +
+                '<button type="button" class="btn btn-outline-secondary btn-sm" id="createFromSearch">Als neuen Artikel anlegen</button>';
             if (resultCount) resultCount.textContent = '';
             return;
         }
@@ -320,6 +329,58 @@
             e.preventDefault();
             if (searchInput) performSearch(searchInput.value.trim());
         });
+    }
+
+    // --------- Neuer Artikel aus leerer Suche ----------
+    if (searchResultsContainer) {
+        searchResultsContainer.addEventListener('click', function (ev) {
+            if (!ev.target.closest('#createFromSearch')) return;
+            var nameInput = document.getElementById('artikelname');
+            nameInput.value = searchInput.value.trim();
+            document.getElementById('addArticleCard').scrollIntoView({ behavior: 'smooth' });
+            document.getElementById('einheit').focus();
+        });
+    }
+
+    // --------- Kostenstelle merken + zuletzt gezählt ----------
+    var kstSelect = document.getElementById('kostenstelle');
+    var recentBox = document.getElementById('recent-articles');
+    var recentChips = document.getElementById('recent-chips');
+    function loadRecent() {
+        if (!kstSelect || !kstSelect.value) { recentBox.style.display = 'none'; return; }
+        fetch('/recent_articles?kostenstelle=' + encodeURIComponent(kstSelect.value))
+            .then(function (r) { return r.json(); })
+            .then(function (list) {
+                recentChips.innerHTML = '';
+                recentBox.style.display = list.length ? '' : 'none';
+                list.forEach(function (a) {
+                    var b = document.createElement('button');
+                    b.type = 'button';
+                    b.className = 'btn btn-outline-secondary btn-sm mr-1 mb-1';
+                    b.textContent = a.artikelname;
+                    b.addEventListener('click', function () {
+                        searchInput.value = a.artikelname;
+                        performSearch(a.artikelname);
+                        resultsCardScroll();
+                    });
+                    recentChips.appendChild(b);
+                });
+            });
+    }
+    function resultsCardScroll() {
+        var c = document.getElementById('resultsCard');
+        if (c) c.scrollIntoView({ behavior: 'smooth' });
+    }
+    if (kstSelect) {
+        kstSelect.addEventListener('change', function () {
+            fetch('/set_kostenstelle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'kostenstelle=' + encodeURIComponent(kstSelect.value)
+            });
+            loadRecent();
+        });
+        loadRecent();
     }
 
     // --------- Delegated Add-to-Cart ----------
@@ -472,14 +533,21 @@
             }
 
             // aktuelle Daten holen (falls Server-Seite rechnet)
-            toJson(fetch('/get_cart'))
-            .then(function (items) {
+            Promise.all([
+                toJson(fetch('/get_cart')),
+                fetch('/existing_counts?kostenstelle=' + encodeURIComponent(kstSelect.value)).then(function (r) { return r.json(); })
+            ])
+            .then(function (res) {
+                var items = res[0], existing = res[1] || {};
                 var list = Array.isArray(items) ? items : [];
                 var summary = list.map(function (it) {
+                    var vorher = existing[String(it.artikelname).trim().toLowerCase()];
                     return it.artikelname +
                         ' - Menge: ' + it.menge +
-                        ' | Gesamt: ' + formatCurrency(it.gesamtpreis);
-                }).join('\n');
+                        ' | Gesamt: ' + formatCurrency(it.gesamtpreis) +
+                        (vorher !== undefined ? '  ⚠ bereits erfasst: ' + vorher + ' → wird addiert' : '');
+                }).join('
+');
                 var msg = 'Folgende Positionen werden gespeichert:\n\n' + summary;
                 if (!window.confirm(msg)) return;
 
