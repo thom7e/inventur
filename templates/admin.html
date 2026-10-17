@@ -417,6 +417,9 @@
             yearEndForm.addEventListener('submit', function (event) {
                 event.preventDefault();
                 var jahr = document.getElementById('yearEndYear').value;
+                if (!window.confirm('Jahresabschluss ' + jahr + ' wirklich durchführen? Die Kostenstellen werden archiviert und das Inventurjahr wechselt auf ' + (parseInt(jahr, 10) + 1) + '.')) {
+                    return;
+                }
 
                 fetch('/admin/year_end', {
                     method: 'POST',
