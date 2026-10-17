@@ -611,7 +611,10 @@ def fetch_nc_kostenstellen():
                 timeout=5,
             )
             resp.raise_for_status()
-            rows = [(r["nummer"], r["bezeichnung"]) for r in resp.json()]
+            unique = {}
+            for r in resp.json():
+                unique.setdefault(r["nummer"], r["bezeichnung"])
+            rows = list(unique.items())
             _kst_cache.update(ts=now, rows=rows)
             return rows
         except (requests.RequestException, ValueError, KeyError):
