@@ -2,21 +2,21 @@
 {% block title %}Login{% endblock %}
 
 {% block page_header %}
-<div class="main-header">
+<div class="main-header" style="justify-content:center;text-align:center;">
     <div>
         <h1 class="main-title">Anmeldung</h1>
-        <p class="text-muted mb-0">Bitte melden Sie sich mit Ihrem Administrationskonto an.</p>
+        <p class="text-muted mb-0">Zugang nur für Büromitarbeiter.</p>
     </div>
 </div>
 {% endblock %}
 
 {% block content %}
 {% if nc_enabled %}
-<section class="section-card" style="max-width: 480px;">
+<section class="section-card" style="max-width: 480px; margin-left:auto; margin-right:auto;">
     <a class="btn btn-custom btn-lg btn-block" href="{{ url_for('oauth_start') }}">Mit Nextcloud anmelden</a>
 </section>
 {% endif %}
-<section class="section-card" style="max-width: 480px;">
+<section class="section-card" style="max-width: 480px; margin-left:auto; margin-right:auto;">
     {% if nc_enabled %}<h2 class="h6 text-muted">Notfall-Login (lokaler Admin)</h2>{% endif %}
     <form method="post" action="{{ url_for('login') }}">
         <div class="form-group">

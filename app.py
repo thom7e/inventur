@@ -589,6 +589,7 @@ NC_CLIENT_SECRET = os.getenv("NEXTCLOUD_CLIENT_SECRET", "")
 NC_REDIRECT_URI = os.getenv("OAUTH_REDIRECT_URI", "")
 NC_VERIFY_TLS = os.getenv("NC_VERIFY_TLS", "1") != "0"
 MANAGER_GROUPS = {x.strip().casefold() for x in os.getenv("MANAGER_GROUPS", "").split(",") if x.strip()}
+ACCESS_GROUPS = MANAGER_GROUPS | {x.strip().casefold() for x in os.getenv("ACCESS_GROUPS", "büromitarbeiter").split(",") if x.strip()}
 URLAUBSPLANER_API = os.getenv("URLAUBSPLANER_API", "").rstrip("/")
 INVENTUR_API_TOKEN = os.getenv("INVENTUR_API_TOKEN", "")
 NC_ENABLED = bool(NC_BASE_URL and NC_CLIENT_ID and NC_CLIENT_SECRET)
@@ -674,6 +675,9 @@ def oauth_callback():
     if not uid:
         return Response('Nextcloud lieferte keine Benutzer-ID.', status=502)
     groups = [str(g) for g in (data.get('groups') or [])]
+    if not any(g.casefold() in ACCESS_GROUPS for g in groups):
+        audit_log('nc_login_denied', uid)
+        return Response('Kein Zugriff: nur für Büromitarbeiter.', status=403)
     is_manager = any(g.casefold() in MANAGER_GROUPS for g in groups)
     session.clear()
     session['nc_user'] = uid
