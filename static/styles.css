@@ -394,3 +394,14 @@ select.form-control { padding-right: 2rem; }
 .table td, .table th { padding: 0.4rem 0.6rem; }
 .admin-search-results .admin-result-card { padding: 0.6rem 0.8rem; margin-bottom: 0.5rem; box-shadow: none; }
 @media (max-width: 576px) { .btn-custom { width: auto; } .section-card { padding: 0.8rem; } }
+
+#cart-list{margin:0 0 .75rem}
+.cart-row{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:.75rem;padding:.45rem 0;border-bottom:1px solid #e9ecef}
+.cart-row:last-child{border-bottom:0}
+.cart-name{min-width:0;overflow-wrap:anywhere}
+.cart-fig{display:grid;grid-template-columns:7.5rem 5.5rem;text-align:right;font-variant-numeric:tabular-nums;font-size:.85rem}
+.cart-qty{color:#6c757d}
+.cart-sum{font-weight:600}
+.cart-remove{width:1.75rem;height:1.75rem;line-height:1;border:0;border-radius:50%;background:transparent;color:#6c757d;font-size:1.25rem;cursor:pointer}
+.cart-remove:hover,.cart-remove:focus-visible{background:#fde8ea;color:#e30613}
+@media(max-width:575px){.cart-row{grid-template-columns:1fr auto}.cart-fig{grid-column:1;grid-template-columns:1fr auto;text-align:left}.cart-remove{grid-row:1;grid-column:2}}

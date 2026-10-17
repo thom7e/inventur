@@ -81,13 +81,10 @@
     </div>
     <ul id="cart-list" class="list-unstyled mb-2">
         {% for item in cart %}
-            <li data-artikel="{{ item.artikelname }}">
-                <div>
-                    <span class="font-weight-bold">{{ item.artikelname }}</span>
-                    <small class="text-muted ml-1">{{ item.einheit }}</small>
-                    <div class="text-muted small">Menge: {{ item.menge }} | Preis: {{ item.preis }} | Gesamt: {{ item.gesamtpreis }}</div>
-                </div>
-                <button type="button" class="btn btn-sm btn-outline-danger cart-remove" data-artikel="{{ item.artikelname }}">Entfernen</button>
+            <li class="cart-row" data-artikel="{{ item.artikelname }}">
+                <div class="cart-name"><strong>{{ item.artikelname }}</strong> <small class="text-muted">{{ item.einheit }}</small></div>
+                <div class="cart-fig"><span class="cart-qty">{{ item.menge }} &times; {{ '%.2f'|format(item.preis|float) }}</span><span class="cart-sum">{{ '%.2f'|format(item.gesamtpreis|float) }} &euro;</span></div>
+                <button type="button" class="cart-remove" data-artikel="{{ item.artikelname }}" title="Entfernen" aria-label="Entfernen">&times;</button>
             </li>
         {% endfor %}
     </ul>
@@ -166,38 +163,15 @@
             var li = document.createElement('li');
             li.dataset.artikel = item.artikelname;
 
-            var header = document.createElement('div');
-            header.className = 'd-flex justify-content-between align-items-center';
-
-            var title = document.createElement('div');
-            var name = document.createElement('span');
-            name.className = 'font-weight-bold';
-            name.textContent = item.artikelname;
-
-            var unit = document.createElement('small');
-            unit.className = 'text-muted ml-2';
-            unit.textContent = item.einheit || '';
-
-            title.appendChild(name);
-            title.appendChild(unit);
-
-            var btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'btn btn-sm btn-outline-danger cart-remove';
-            btn.dataset.artikel = item.artikelname;
-            btn.textContent = 'Entfernen';
-
-            header.appendChild(title);
-            header.appendChild(btn);
-
-            var meta = document.createElement('div');
-            meta.className = 'text-muted small';
-            meta.textContent = 'Menge: ' + item.menge +
-                ' | Preis: ' + formatCurrency(item.preis) +
-                ' | Gesamt: ' + formatCurrency(item.gesamtpreis);
-
-            li.appendChild(header);
-            li.appendChild(meta);
+            li.className = 'cart-row';
+            li.innerHTML = '<div class="cart-name"><strong></strong> <small class="text-muted"></small></div>' +
+                '<div class="cart-fig"><span class="cart-qty"></span><span class="cart-sum"></span></div>' +
+                '<button type="button" class="cart-remove" title="Entfernen" aria-label="Entfernen">&times;</button>';
+            li.querySelector('strong').textContent = item.artikelname;
+            li.querySelector('small').textContent = item.einheit || '';
+            li.querySelector('.cart-qty').textContent = item.menge + ' × ' + Number(item.preis).toFixed(2);
+            li.querySelector('.cart-sum').textContent = Number(item.gesamtpreis).toFixed(2) + ' €';
+            li.querySelector('.cart-remove').dataset.artikel = item.artikelname;
             cartList.appendChild(li);
         });
     }
