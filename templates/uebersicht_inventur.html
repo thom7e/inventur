@@ -41,25 +41,52 @@
                 <label class="custom-control-label" for="alleKostenstellen">Alle Kostenstellen anzeigen</label>
             </div>
             <div id="kostenstellenFilter" class="border rounded p-3" style="max-height: 320px; overflow-y: auto;">
-                {% for kostenstelle in alle_kostenstellen %}
+                {% for key, label in alle_kostenstellen %}
                 <div class="custom-control custom-checkbox mb-2">
-                    <input type="checkbox" class="custom-control-input kostenstelleCheckbox" id="ks-{{ loop.index }}" value="{{ kostenstelle }}">
-                    <label class="custom-control-label" for="ks-{{ loop.index }}">{{ kostenstelle }}</label>
+                    <input type="checkbox" class="custom-control-input kostenstelleCheckbox" id="ks-{{ loop.index }}" value="{{ key }}">
+                    <label class="custom-control-label" for="ks-{{ loop.index }}">{{ label }}</label>
                 </div>
                 {% endfor %}
             </div>
         </div>
 
         <div class="col-md-8">
+            {% if fortschritt %}
+            {% set erfasst = fortschritt | selectattr('positionen') | list | length %}
+            <details class="card mb-3" open>
+                <summary class="card-header">
+                    <strong>Fortschritt {{ active_inventur_year }}:</strong>
+                    {{ erfasst }} von {{ fortschritt | length }} Kostenstellen erfasst
+                    <span class="small">(Vergleich mit {{ active_inventur_year - 1 }})</span>
+                </summary>
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0">
+                        <thead><tr><th>Kostenstelle</th><th class="text-right">Pos.</th><th class="text-right">Summe {{ active_inventur_year }}</th><th class="text-right">Summe {{ active_inventur_year - 1 }}</th><th></th></tr></thead>
+                        <tbody>
+                        {% for f in fortschritt %}
+                            <tr>
+                                <td>{{ f.label }}</td>
+                                <td class="text-right">{{ f.positionen }}</td>
+                                <td class="text-right">{{ '%.2f' | format(f.summe or 0) }}</td>
+                                <td class="text-right">{{ '%.2f' | format(f.summe_vj or 0) }}</td>
+                                <td>{% if f.positionen %}<span class="badge badge-success">erfasst</span>{% else %}<span class="badge badge-warning">offen</span>{% endif %}</td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+            {% endif %}
+
             {% if not gruppierte_inventur %}
-                <p class="text-muted">Noch keine Inventur gespeichert.</p>
+                <p class="text-muted">Für diese Auswahl ist noch nichts gespeichert.</p>
             {% else %}
                 {% macro f2(v) -%}{{ '%.2f' | format(v|float) }}{%- endmacro %}
 
-                {% for kostenstelle, details in gruppierte_inventur.items() %}
-                <div class="card mb-3 kostenstelle-card" data-kostenstelle="{{ kostenstelle }}">
+                {% for key, details in gruppierte_inventur.items() %}
+                <div class="card mb-3 kostenstelle-card" data-kostenstelle="{{ key }}">
                     <div class="card-header d-flex justify-content-between align-items-center">
-                        <strong>{{ kostenstelle }}</strong>
+                        <strong>{{ details.label }}</strong>
                         <span class="small text-light">
                             {% if ausgewaehltes_jahr %}Jahr: {{ ausgewaehltes_jahr }} · {% endif %}
                             Summe: {{ '%.2f' | format(details.gesamtsumme|float) }}
@@ -76,12 +103,11 @@
                                         <th>Einheit</th>
                                         <th>Preis</th>
                                         <th>Gesamtpreis</th>
-                                        <th>Aktionen</th> 
+                                        <th>Erfasst</th>
+                                        <th>Aktionen</th>
                                     </tr>
                                 </thead>
                                <tbody>
-                                {% macro f2(v) -%}{{ '%.2f' | format(v|float) }}{%- endmacro %}
-
                                 {% for inventur in details.materialien %}
                                     <tr data-rid="{{ inventur._rid if inventur._rid is defined }}">
                                     <td>{{ inventur.jahr }}</td>
@@ -90,6 +116,7 @@
                                     <td>{{ inventur.einheit }}</td>
                                     <td>{{ f2(inventur.preis) }}</td>
                                     <td>{{ f2(inventur.gesamtpreis) }}</td>
+                                    <td class="small text-muted">{% if inventur.erfasst_von %}{{ inventur.erfasst_von }}<br>{{ inventur.erfasst_am }}{% endif %}</td>
                                     <td>
                                         {% if inventur._rid is defined and inventur.jahr == active_inventur_year %}
                                         <button type="button" class="btn btn-sm btn-outline-primary inv-edit" data-id="{{ inventur._rid }}">Bearbeiten</button>
@@ -104,7 +131,7 @@
                                 <tr class="font-weight-bold">
                                     <td colspan="5" class="text-right">Summe</td>
                                     <td>{{ '%.2f' | format(details.gesamtsumme|float) }}</td>
-                                    <td></td>
+                                    <td colspan="2"></td>
                                 </tr>
                                 </tbody>
 
@@ -199,6 +226,7 @@
 
     
 })();
+var EINHEITEN = {{ einheiten | tojson }};
 (function(){
   // Delegation: Editieren / Löschen in der Tabelle
   var container = document.querySelector('.section-card'); // oder exakter: die card-body
@@ -230,7 +258,7 @@
 
     if (editBtn){
       var name = window.prompt('Artikelname:', cur.artikel); if (!name) return;
-      var unit = window.prompt('Einheit:', cur.einheit); if (!unit) return;
+      var unit = window.prompt('Einheit (' + EINHEITEN.join(', ') + '):', cur.einheit); if (!unit) return;
       var menge = window.prompt('Menge:', String(cur.menge).replace(',', '.')); if (!menge) return;
       var preis = window.prompt('Preis:', String(cur.preis).replace(',', '.')); if (preis==null) return;
 

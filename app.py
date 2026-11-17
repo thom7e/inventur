@@ -321,10 +321,22 @@ def fetch_kostenstellen():
         ).fetchall()
 
 
+def kostenstellen_choices():
+    """Aktive Kostenstellen plus Lagerorte als Unter-Kostenstellen (6010-01 ...)."""
+    lager = [(f"{LAGER_KST}-{code}", name) for code, name in LAGERORTE]
+    choices = []
+    for r in fetch_kostenstellen():
+        choices.append((r["kostenstellen_nummer"], r["kostenstellen_bezeichnung"]))
+        if r["kostenstellen_nummer"] == LAGER_KST:
+            choices.extend(lager)
+            lager = []
+    return choices + lager
+
+
 def find_kostenstelle(nummer):
-    for row in fetch_kostenstellen():
-        if row["kostenstellen_nummer"] == nummer:
-            return {"kostenstellen_bezeichnung": row["kostenstellen_bezeichnung"]}
+    for key, bezeichnung in kostenstellen_choices():
+        if key == nummer:
+            return {"kostenstellen_bezeichnung": bezeichnung}
     return None
 
 
@@ -442,29 +454,14 @@ def clear_cart_items(cart_token: str) -> None:
 
 
 def group_inventur_rows(rows):
+    """Gruppiert nach kst_key; Anzeigename = Bezeichnung des jüngsten Eintrags (Rows nach Jahr sortiert)."""
     grouped = {}
     for row in rows:
-        # sqlite3.Row -> dict (inkl. _rid, falls selektiert)
-        if hasattr(row, "keys"):
-            row_dict = {k: row[k] for k in row.keys()}
-        else:
-            # Fallback: per Index (nur falls wirklich kein Row-Objekt)
-            try:
-                row_dict = {
-                    "_rid":        row[0] if len(row) > 0 else None,
-                    "kostenstelle": row[1],
-                    "jahr":         row[2],
-                    "artikelname":  row[3],
-                    "einheit":      row[4],
-                    "menge":        row[5],
-                    "preis":        row[6],
-                    "gesamtpreis":  row[7],
-                }
-            except Exception:
-                continue
-
-        ks = (row_dict.get("kostenstelle") or "").strip()
-        entry = grouped.setdefault(ks, {"materialien": [], "gesamtsumme": Decimal("0")})
+        row_dict = {k: row[k] for k in row.keys()}
+        label = (row_dict.get("kostenstelle") or "").strip()
+        key = row_dict.get("kst_key") or label
+        entry = grouped.setdefault(key, {"materialien": [], "gesamtsumme": Decimal("0")})
+        entry["label"] = label
         entry["materialien"].append(row_dict)
 
         total_decimal = normalize_decimal_value(row_dict.get("gesamtpreis"), default=Decimal("0"))
@@ -495,6 +492,26 @@ CART_COOKIE = 'inv_cart'
 CART_COOKIE_MAX_AGE = 90 * 24 * 3600
 KST_COOKIE = 'inv_kst'
 
+LAGER_KST = '6010'
+LAGERORTE = [
+    ('01', 'Aussenlager'), ('02', 'Baggerzähne'), ('03', 'Tiefgarage'), ('04', 'Zementlager'),
+    ('05', 'Öllager'), ('06', 'Filterlager'), ('07', 'Farblager'), ('08', 'Kleinteilelager'),
+]
+EINHEITEN = ['stck', 'm', 'lfm', 'm²', 'm³', 'l', 'kg', 'to', 'Sack', 'Rolle', 'Eimer',
+             'Palette', 'Pak', 'Bund', 'Karton', 'Beutel', 'Platte']
+EINHEIT_ALIASE = {'stk': 'stck', 'stück': 'stck', 'liter': 'l', 'm2': 'm²', 'qm': 'm²',
+                  'm3': 'm³', 'cbm': 'm³', 't': 'to'}
+
+
+def canonical_unit(value):
+    v = (value or '').strip().casefold()
+    v = EINHEIT_ALIASE.get(v, v)
+    return next((u for u in EINHEITEN if u.casefold() == v), None)
+
+
+def current_user_label() -> str:
+    return session.get('nc_name') or session.get('nc_user') or 'admin'
+
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 _admin_password_hash = os.getenv("ADMIN_PASSWORD_HASH")
 if not _admin_password_hash:
@@ -516,6 +533,27 @@ def ensure_audit_log_table() -> None:
         conn.commit()
 
 
+def ensure_inventur_columns() -> None:
+    """kst_key = Kostenstellennummer (bei Lagerorten 6010-01), unabhängig von der Bezeichnung."""
+    with db_connection(COST_CENTER_DB) as conn:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(inventur)")}
+        for col in ("kst_key", "erfasst_von", "erfasst_am"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE inventur ADD COLUMN {col} TEXT")
+        conn.execute(
+            """
+            UPDATE inventur SET kst_key = CASE
+                WHEN kostenstelle GLOB ? THEN substr(kostenstelle, 1, ?)
+                WHEN instr(kostenstelle, '-') > 0 THEN substr(kostenstelle, 1, instr(kostenstelle, '-') - 1)
+                ELSE kostenstelle END
+            WHERE kst_key IS NULL
+            """,
+            (LAGER_KST + '-[0-9][0-9]-*', len(LAGER_KST) + 3),
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_inventur_jahr_key ON inventur(jahr, kst_key)")
+        conn.commit()
+
+
 def _bootstrap() -> None:
     try:
         ensure_cart_table()
@@ -523,6 +561,7 @@ def _bootstrap() -> None:
         ensure_app_meta_table()
         ensure_audit_log_table()
         ensure_cost_center_unique_index()
+        ensure_inventur_columns()
 
     except Exception:
         app.logger.exception("Bootstrap failed")
@@ -760,8 +799,9 @@ def admin():
         'admin.html',
         articles=articles,
         current_year=datetime.now().year,
-        active_inventur_year=active_year,   # <-- neu
-        closable_years=closable_years       # <-- neu
+        active_inventur_year=active_year,
+        closable_years=closable_years,
+        einheiten=EINHEITEN,
     )
 
 @app.route('/admin/inventur/update_row', methods=['POST'])
@@ -776,11 +816,11 @@ def admin_update_inventur_row():
         return respond_error('Ungültige ID.')
 
     new_name  = (data.get('artikelname') or '').strip()
-    new_unit  = (data.get('einheit') or '').strip()
+    new_unit  = canonical_unit(data.get('einheit'))
     menge_raw = data.get('menge')
     preis_raw = data.get('preis')
     if not new_name or not new_unit:
-        return respond_error('Artikelname und Einheit sind erforderlich.')
+        return respond_error('Artikelname und gültige Einheit sind erforderlich (' + ', '.join(EINHEITEN) + ').')
     try:
         menge = parse_decimal(menge_raw, 'Menge', allow_zero=False)
         preis = parse_decimal(preis_raw, 'Preis', allow_zero=True)
@@ -841,13 +881,9 @@ def get_cart():
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    cart_token = g.cart_token
-    cart_items = fetch_cart_items(cart_token)
-    cart_template_items = cart_items_for_template(cart_items)
+    cart_items = fetch_cart_items(g.cart_token)
 
-    # NUR aktive Kostenstellen aus der akt. Tabelle (nicht Archiv)
-    rows = fetch_kostenstellen()
-    kostenstellen = [(r["kostenstellen_nummer"], r["kostenstellen_bezeichnung"]) for r in rows]
+    kostenstellen = kostenstellen_choices()
 
     selected_cost_center = (request.form.get('kostenstelle') if request.method == 'POST' else None) or request.cookies.get(KST_COOKIE)
     search_query = request.form.get('search_query', '').strip() if request.method == 'POST' else ''
@@ -869,8 +905,8 @@ def index():
         search_query=search_query,
         kostenstellen=kostenstellen,
         ausgewaehlte_kostenstelle=selected_cost_center,
-        cart=cart_template_items,
         active_inventur_year=get_active_inventur_year(),
+        einheiten=EINHEITEN,
     )
 
 
@@ -892,12 +928,12 @@ def recent_articles():
             """
             SELECT artikelname, einheit, MAX(rowid) AS last_id
             FROM inventur
-            WHERE jahr = ? AND kostenstelle LIKE ?
+            WHERE jahr = ? AND kst_key = ?
             GROUP BY artikelname, einheit
             ORDER BY last_id DESC
             LIMIT 8
             """,
-            (get_active_inventur_year(), nummer + '-%'),
+            (get_active_inventur_year(), nummer),
         ).fetchall()
     return jsonify([{'artikelname': r['artikelname'], 'einheit': r['einheit']} for r in rows])
 
@@ -911,9 +947,9 @@ def existing_counts():
         rows = conn.execute(
             """
             SELECT artikelname, menge FROM inventur
-            WHERE jahr = ? AND kostenstelle LIKE ?
+            WHERE jahr = ? AND kst_key = ?
             """,
-            (get_active_inventur_year(), nummer + '-%'),
+            (get_active_inventur_year(), nummer),
         ).fetchall()
     return jsonify({r['artikelname'].strip().casefold(): r['menge'] for r in rows})
 
@@ -1033,15 +1069,33 @@ def remove_from_cart():
     return jsonify(cart_items_for_json(cart_items))
 
 
-@app.route('/add_artikel', methods=['POST'])
-def add_artikel():
+@app.route('/update_cart_qty', methods=['POST'])
+def update_cart_qty():
     data = request.get_json(silent=True) or {}
-    artikelname = normalize_article_name(data.get('artikelname'))
-    einheit = (data.get('einheit') or '').strip()
-    preis_raw = data.get('preis')
+    artikelname = (data.get('artikelname') or '').strip()
+    try:
+        menge = parse_decimal(data.get('menge'), 'Menge', allow_zero=True)
+    except ValueError as exc:
+        return respond_error(str(exc))
 
+    with db_connection(COST_CENTER_DB) as conn:
+        row = conn.execute(
+            "SELECT menge, einheit, preis FROM session_cart_items WHERE cart_token = ? AND artikelname = ?",
+            (g.cart_token, artikelname),
+        ).fetchone()
+    if not row:
+        return respond_error('Artikel ist nicht im Warenkorb.', status=404)
+
+    update_cart_item(g.cart_token, artikelname, row['einheit'], Decimal(row['preis']),
+                     menge - Decimal(row['menge']))
+    return jsonify(cart_items_for_json(fetch_cart_items(g.cart_token)))
+
+
+def upsert_article(artikelname_raw, einheit_raw, preis_raw, *, allow_update: bool):
+    artikelname = normalize_article_name(artikelname_raw)
+    einheit = canonical_unit(einheit_raw)
     if not artikelname or not einheit:
-        return respond_error('Artikelname und Einheit sind erforderlich.')
+        return respond_error('Artikelname und gültige Einheit sind erforderlich (' + ', '.join(EINHEITEN) + ').')
 
     try:
         preis = parse_decimal(preis_raw, 'Preis')
@@ -1050,22 +1104,16 @@ def add_artikel():
 
     with db_connection(ARTICLE_DB) as conn:
         existing = conn.execute(
-            """
-            SELECT artikelname
-            FROM artikel
-            WHERE TRIM(artikelname) = ? COLLATE NOCASE
-            """,
+            "SELECT artikelname FROM artikel WHERE TRIM(artikelname) = ? COLLATE NOCASE",
             (artikelname,),
         ).fetchone()
 
+        if existing and not allow_update:
+            return respond_error(
+                f'Den Artikel „{existing["artikelname"]}“ gibt es schon. Bitte über die Suche auswählen.', status=409)
         if existing:
-            # UPSERT: vorhandenen Artikel updaten
             conn.execute(
-                """
-                UPDATE artikel
-                SET artikelname = ?, einheit = ?, preis = ?
-                WHERE TRIM(artikelname) = ? COLLATE NOCASE
-                """,
+                "UPDATE artikel SET artikelname = ?, einheit = ?, preis = ? WHERE TRIM(artikelname) = ? COLLATE NOCASE",
                 (artikelname, einheit, float(quantize_currency(preis)), artikelname),
             )
             msg = 'Artikel aktualisiert.'
@@ -1075,10 +1123,17 @@ def add_artikel():
                 (artikelname, einheit, float(quantize_currency(preis))),
             )
             msg = 'Artikel erfolgreich hinzugefügt.'
-
         conn.commit()
 
+    audit_log('artikel_neu' if msg.endswith('hinzugefügt.') else 'artikel_geaendert', f'{artikelname} | {einheit} | {preis}')
     return jsonify({'success': True, 'message': msg})
+
+
+@app.route('/add_artikel', methods=['POST'])
+def add_artikel():
+    data = request.get_json(silent=True) or {}
+    return upsert_article(data.get('artikelname'), data.get('einheit'), data.get('preis'),
+                          allow_update=bool(session.get('is_admin')))
 
 
 @app.route('/clear_cart', methods=['POST'])
@@ -1168,6 +1223,8 @@ def export_excel():
 def save_to_inventur():
     kostenstelle_nummer = request.form.get('kostenstelle')
     jahr = get_active_inventur_year()
+    erfasst_von = current_user_label()
+    erfasst_am = datetime.now().strftime('%Y-%m-%d %H:%M')
 
     if not kostenstelle_nummer:
         return respond_error('Kostenstellennummer ist erforderlich.')
@@ -1196,12 +1253,12 @@ def save_to_inventur():
                 """
                 SELECT rowid AS rid, menge, preis
                 FROM inventur
-                WHERE kostenstelle = ?
+                WHERE kst_key = ?
                 AND jahr = ?
                 AND TRIM(artikelname) = ? COLLATE NOCASE
                 AND einheit = ?
                 """,
-                (kostenstelle, jahr, artikelname, einheit),
+                (kostenstelle_nummer, jahr, artikelname, einheit),
             ).fetchone()
 
             if existing:
@@ -1213,32 +1270,26 @@ def save_to_inventur():
                 conn.execute(
                     """
                     UPDATE inventur
-                    SET menge = ?, preis = ?, gesamtpreis = ?
+                    SET kostenstelle = ?, menge = ?, preis = ?, gesamtpreis = ?, erfasst_von = ?, erfasst_am = ?
                     WHERE rowid = ?
                     """,
-                    (float(neue_menge), float(preis_neu), float(neue_gesamt), existing['rid']),
+                    (kostenstelle, float(neue_menge), float(preis_neu), float(neue_gesamt),
+                     erfasst_von, erfasst_am, existing['rid']),
                 )
             else:
-                # Neuer Eintrag
                 gesamt = quantize_currency(menge_neu * preis_neu)
                 conn.execute(
                     """
                     INSERT INTO inventur
-                    (kostenstelle, jahr, artikelname, einheit, menge, preis, gesamtpreis)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (kostenstelle, kst_key, jahr, artikelname, einheit, menge, preis, gesamtpreis, erfasst_von, erfasst_am)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (
-                        kostenstelle,
-                        jahr,
-                        artikelname,
-                        einheit,
-                        float(menge_neu),
-                        float(preis_neu),
-                        float(gesamt),
-                    ),
+                    (kostenstelle, kostenstelle_nummer, jahr, artikelname, einheit,
+                     float(menge_neu), float(preis_neu), float(gesamt), erfasst_von, erfasst_am),
                 )
 
         conn.commit()
+    audit_log('inventur_gespeichert', f'{kostenstelle} | {len(cart_items)} Positionen')
 
     # Warenkorb leeren
     clear_cart_items(g.cart_token)
@@ -1339,11 +1390,11 @@ def update_article():
     # NEU: Namen normalisieren
     original_artikelname = normalize_article_name(data.get('originalArticleName'))
     new_artikelname = normalize_article_name(data.get('newArticleName'))
-    new_einheit = (data.get('newUnit') or '').strip()
+    new_einheit = canonical_unit(data.get('newUnit'))
     new_price_raw = data.get('newPrice')
 
     if not (original_artikelname and new_artikelname and new_einheit):
-        return respond_error('Ungültige Eingabedaten')
+        return respond_error('Artikelname und gültige Einheit sind erforderlich (' + ', '.join(EINHEITEN) + ').')
 
     try:
         new_price = parse_decimal(new_price_raw, 'Preis', allow_zero=True)
@@ -1392,83 +1443,39 @@ def add_article():
         return respond_error('Unbefugter Zugriff', status=403)
 
     data = request.get_json(silent=True) or {}
-    artikelname = normalize_article_name(data.get('name'))
-    einheit = (data.get('einheit') or '').strip()
-    preis_raw = data.get('preis')
-
-    if not artikelname or not einheit:
-        return respond_error('Ungültige Eingabedaten')
-
-    try:
-        preis = parse_decimal(preis_raw, 'Preis')
-    except ValueError as exc:
-        return respond_error(str(exc))
-
-    with db_connection(ARTICLE_DB) as conn:
-        existing = conn.execute(
-            """
-            SELECT artikelname
-            FROM artikel
-            WHERE TRIM(artikelname) = ? COLLATE NOCASE
-            """,
-            (artikelname,),
-        ).fetchone()
-
-        if existing:
-            # UPSERT: vorhandenen Artikel updaten
-            conn.execute(
-                """
-                UPDATE artikel
-                SET artikelname = ?, einheit = ?, preis = ?
-                WHERE TRIM(artikelname) = ? COLLATE NOCASE
-                """,
-                (artikelname, einheit, float(quantize_currency(preis)), artikelname),
-            )
-            msg = 'Artikel aktualisiert.'
-        else:
-            conn.execute(
-                'INSERT INTO artikel (artikelname, einheit, preis) VALUES (?, ?, ?)',
-                (artikelname, einheit, float(quantize_currency(preis))),
-            )
-            msg = 'Artikel erfolgreich hinzugefügt.'
-
-        conn.commit()
-
-    return jsonify({'success': True, 'message': msg})
+    return upsert_article(data.get('name'), data.get('einheit'), data.get('preis'), allow_update=True)
 
 
 
 @app.route('/uebersicht_inventur')
 def uebersicht_inventur():
     try:
-        # Jahr-Filter aus Query (z. B. /uebersicht_inventur?jahr=2024). "all" oder leer = alle Jahre.
+        # Ohne Parameter: aktives Jahr. "all" = alle Jahre.
+        active_year = get_active_inventur_year()
         jahr_param = (request.args.get('jahr') or '').strip()
-        selected_year = None
-        if jahr_param and jahr_param.lower() != 'all':
+        selected_year = active_year
+        if jahr_param.lower() == 'all':
+            selected_year = None
+        elif jahr_param:
             try:
                 selected_year = int(jahr_param)
             except ValueError:
-                selected_year = None  # ungültig -> behandle wie "alle"
+                selected_year = None
 
         with db_connection(COST_CENTER_DB) as conn:
             if selected_year is not None:
-                # Nur dieses Jahr laden
                 rows = conn.execute(
-                    "SELECT rowid as _rid, *  FROM inventur WHERE jahr = ? ORDER BY kostenstelle, jahr, artikelname",
+                    "SELECT rowid as _rid, * FROM inventur WHERE jahr = ? ORDER BY kst_key, jahr, artikelname",
                     (selected_year,),
                 ).fetchall()
             else:
-                # Alle Jahre
                 rows = conn.execute(
-                    "SELECT rowid as _rid, * FROM inventur ORDER BY kostenstelle, jahr, artikelname"
+                    "SELECT rowid as _rid, * FROM inventur ORDER BY kst_key, jahr, artikelname"
                 ).fetchall()
 
         gruppierte_inventur = group_inventur_rows(rows)
-        alle_kostenstellen = sorted(gruppierte_inventur.keys())
-        verfuegbare_jahre = fetch_available_years()
-
-        archived_years = fetch_archived_years()
-        archived_years_str = {str(y) for y in archived_years}
+        alle_kostenstellen = [(k, v['label']) for k, v in sorted(gruppierte_inventur.items())]
+        verfuegbare_jahre = sorted(set(fetch_available_years()) | {active_year}, reverse=True)
 
         return render_template(
             'uebersicht_inventur.html',
@@ -1476,8 +1483,9 @@ def uebersicht_inventur():
             alle_kostenstellen=alle_kostenstellen,
             verfuegbare_jahre=verfuegbare_jahre,
             ausgewaehltes_jahr=selected_year,
-            active_inventur_year=get_active_inventur_year(),
-            archived_years_str=archived_years_str,   # <--- NEU
+            active_inventur_year=active_year,
+            fortschritt=fetch_fortschritt(active_year) if selected_year == active_year else None,
+            einheiten=EINHEITEN,
         )
     except Exception:
         app.logger.exception("Fehler in uebersicht_inventur")
@@ -1508,18 +1516,18 @@ def export_inventur_selection():
         kst_filter = [s.strip() for s in raw_list if str(s).strip()]
 
     # Daten laden
-    base_sql = ('SELECT kostenstelle, jahr, artikelname, einheit, menge, preis, gesamtpreis '
-                'FROM inventur')
+    base_sql = ('SELECT kostenstelle, kst_key, jahr, artikelname, einheit, menge, preis, gesamtpreis, '
+                'erfasst_von, erfasst_am FROM inventur')
     conds, params = [], []
     if selected_year is not None:
         conds.append('jahr = ?')
         params.append(selected_year)
     if kst_filter:
         placeholders = ','.join(['?'] * len(kst_filter))
-        conds.append(f'kostenstelle IN ({placeholders})')
+        conds.append(f'kst_key IN ({placeholders})')
         params.extend(kst_filter)
     where = (' WHERE ' + ' AND '.join(conds)) if conds else ''
-    order = ' ORDER BY kostenstelle, jahr, artikelname'
+    order = ' ORDER BY kst_key, jahr, artikelname'
 
     with db_connection(COST_CENTER_DB) as conn:
         rows = conn.execute(base_sql + where + order, tuple(params)).fetchall()
@@ -1536,24 +1544,19 @@ def export_inventur_selection():
 
     gesamtsumme_aller = Decimal('0')
 
-    for kostenstelle, details in gruppierte.items():
-        ws.append([kostenstelle])
+    for details in gruppierte.values():
+        ws.append([details['label']])
         ws.cell(row=ws.max_row, column=1).font = bold_font
 
-        ws.append(['Jahr', 'Artikelname', 'Menge', 'Einheit', 'Preis', 'Gesamtpreis'])
+        ws.append(['Jahr', 'Artikelname', 'Menge', 'Einheit', 'Preis', 'Gesamtpreis', 'Erfasst von', 'Erfasst am'])
         for cell in ws[ws.max_row]:
             cell.font = bold_font
             cell.fill = header_fill
             cell.alignment = Alignment(horizontal='center')
 
-        for material in details['materialien']:
-            jahr = material['jahr'] if 'jahr' in material.keys() else material[2]
-            artikelname = material['artikelname'] if 'artikelname' in material.keys() else material[3]
-            menge = material['menge'] if 'menge' in material.keys() else material[5]
-            einheit = material['einheit'] if 'einheit' in material.keys() else material[4]
-            preis = material['preis'] if 'preis' in material.keys() else material[6]
-            gesamtpreis = material['gesamtpreis'] if 'gesamtpreis' in material.keys() else material[7]
-            ws.append([jahr, artikelname, menge, einheit, preis, gesamtpreis])
+        for m in details['materialien']:
+            ws.append([m['jahr'], m['artikelname'], m['menge'], m['einheit'], m['preis'], m['gesamtpreis'],
+                       m['erfasst_von'] or '', m['erfasst_am'] or ''])
 
         gesamt = quantize_currency(details['gesamtsumme'])
         ws.append(['', '', '', '', 'Gesamt:', float(gesamt)])
@@ -1574,8 +1577,8 @@ def export_inventur_selection():
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal='center')
 
-    for kostenstelle, details in gruppierte.items():
-        ws_summary.append([kostenstelle, float(quantize_currency(details['gesamtsumme']))])
+    for details in gruppierte.values():
+        ws_summary.append([details['label'], float(quantize_currency(details['gesamtsumme']))])
 
     ws_summary.append(['Gesamtsumme aller Kostenstellen:', float(quantize_currency(gesamtsumme_aller))])
     for cell in ws_summary[ws_summary.max_row]:
@@ -1616,6 +1619,25 @@ def export_inventur_selection():
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
 
+
+
+def fetch_fortschritt(jahr: int):
+    """Je Kostenstelle aus aktivem Jahr und Vorjahr: Positionen/Summe jetzt, Summe Vorjahr. Offene zuerst."""
+    with db_connection(COST_CENTER_DB) as conn:
+        return conn.execute(
+            """
+            SELECT kst_key,
+                   COALESCE(MAX(CASE WHEN jahr = :j THEN kostenstelle END), MAX(kostenstelle)) AS label,
+                   SUM(jahr = :j) AS positionen,
+                   SUM(CASE WHEN jahr = :j THEN gesamtpreis ELSE 0 END) AS summe,
+                   SUM(CASE WHEN jahr = :v THEN gesamtpreis ELSE 0 END) AS summe_vj
+            FROM inventur
+            WHERE jahr IN (:j, :v)
+            GROUP BY kst_key
+            ORDER BY positionen > 0, kst_key
+            """,
+            {"j": jahr, "v": jahr - 1},
+        ).fetchall()
 
 
 def fetch_available_years():

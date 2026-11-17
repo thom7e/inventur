@@ -60,7 +60,10 @@
         </div>
         <div class="form-group col-6 col-md-2 mb-2">
             <label for="einheit" class="mb-1">Einheit</label>
-            <input type="text" class="form-control" id="einheit" required>
+            <select class="form-control" id="einheit" required>
+                <option value="">–</option>
+                {% for e in einheiten %}<option value="{{ e }}">{{ e }}</option>{% endfor %}
+            </select>
         </div>
         <div class="form-group col-6 col-md-2 mb-2">
             <label for="preis" class="mb-1">Preis (€)</label>
@@ -75,22 +78,13 @@
 <section class="section-card" id="exportActions">
     <div class="d-flex justify-content-between align-items-center mb-2">
         <h2 class="mb-0">Warenkorb</h2>
-        <form method="post" action="{{ url_for('clear_cart') }}">
+        <form method="post" action="{{ url_for('clear_cart') }}" onsubmit="return confirm('Warenkorb wirklich leeren?')">
             <button type="submit" class="btn btn-outline-secondary btn-sm">Leeren</button>
         </form>
     </div>
-    <ul id="cart-list" class="list-unstyled mb-2">
-        {% for item in cart %}
-            <li class="cart-row" data-artikel="{{ item.artikelname }}">
-                <div class="cart-name"><strong>{{ item.artikelname }}</strong> <small class="text-muted">{{ item.einheit }}</small></div>
-                <div class="cart-fig"><span class="cart-qty">{{ item.menge }} &times; {{ '%.2f'|format(item.preis|float) }}</span><span class="cart-sum">{{ '%.2f'|format(item.gesamtpreis|float) }} &euro;</span></div>
-                <button type="button" class="cart-remove" data-artikel="{{ item.artikelname }}" title="Entfernen" aria-label="Entfernen">&times;</button>
-            </li>
-        {% endfor %}
-    </ul>
-    <p id="cart-empty-hint" class="text-muted small mb-2" {% if cart %}style="display:none"{% endif %}>
-        Noch keine Artikel im Warenkorb.
-    </p>
+    <ul id="cart-list" class="list-unstyled mb-2"></ul>
+    <p id="cart-empty-hint" class="text-muted small mb-2">Noch keine Artikel im Warenkorb.</p>
+    <p id="cart-total" class="text-right small mb-2" style="display:none"></p>
     <form id="saveToInventurForm" method="post" action="{{ url_for('save_to_inventur') }}">
         <button type="submit" class="btn btn-custom btn-block">In Inventur speichern</button>
     </form>
@@ -109,8 +103,9 @@
     var resultCount = document.getElementById('resultCount');
     var cartList = document.getElementById('cart-list');
     var cartHint = document.getElementById('cart-empty-hint');
-    var scrollToActionsBtn = document.getElementById('scrollToActions');
+    var cartTotal = document.getElementById('cart-total');
     var addArticleForm = document.getElementById('addArticleForm');
+    var activeYear = {{ active_inventur_year | tojson }};
 
     // --------- Utils ----------
     function debounce(fn, delay) {
@@ -155,25 +150,36 @@
         cartList.innerHTML = '';
         if (!items || !items.length) {
             cartHint.style.display = '';
+            cartTotal.style.display = 'none';
             return;
         }
         cartHint.style.display = 'none';
 
+        var total = 0;
         items.forEach(function (item) {
             var li = document.createElement('li');
             li.dataset.artikel = item.artikelname;
 
             li.className = 'cart-row';
             li.innerHTML = '<div class="cart-name"><strong></strong> <small class="text-muted"></small></div>' +
-                '<div class="cart-fig"><span class="cart-qty"></span><span class="cart-sum"></span></div>' +
+                '<div class="cart-fig"><span class="cart-qty"><input type="number" class="cart-qty-input" min="0" step="any" inputmode="decimal" aria-label="Menge"> <span class="cart-price"></span></span><span class="cart-sum"></span></div>' +
                 '<button type="button" class="cart-remove" title="Entfernen" aria-label="Entfernen">&times;</button>';
             li.querySelector('strong').textContent = item.artikelname;
             li.querySelector('small').textContent = item.einheit || '';
-            li.querySelector('.cart-qty').textContent = item.menge + ' × ' + Number(item.preis).toFixed(2);
+            li.querySelector('.cart-qty-input').value = item.menge;
+            li.querySelector('.cart-price').textContent = '× ' + Number(item.preis).toFixed(2);
             li.querySelector('.cart-sum').textContent = Number(item.gesamtpreis).toFixed(2) + ' €';
             li.querySelector('.cart-remove').dataset.artikel = item.artikelname;
             cartList.appendChild(li);
+            total += Number(item.gesamtpreis) || 0;
         });
+        cartTotal.textContent = items.length + ' Positionen · Summe ' + total.toFixed(2) + ' €';
+        cartTotal.style.display = '';
+    }
+
+    function kstLabel() {
+        var opt = kstSelect && kstSelect.options[kstSelect.selectedIndex];
+        return opt && opt.value ? opt.textContent.trim() : '';
     }
 
     // --------- Ergebnisse-Render ----------
@@ -290,12 +296,16 @@
                 });
             });
     }
-    function resultsCardScroll() {
-        var c = document.getElementById('resultsCard');
-        if (c) c.scrollIntoView({ behavior: 'smooth' });
-    }
     if (kstSelect) {
+        var prevKst = kstSelect.value;
         kstSelect.addEventListener('change', function () {
+            if (cartState && cartState.length && prevKst && kstSelect.value) {
+                var ok = window.confirm('Im Warenkorb liegen ' + cartState.length + ' Positionen.\n\n' +
+                    'Sie werden beim Speichern unter der neuen Kostenstelle gebucht:\n' + kstLabel() +
+                    '\n\nKostenstelle wirklich wechseln?');
+                if (!ok) { kstSelect.value = prevKst; return; }
+            }
+            prevKst = kstSelect.value;
             fetch('/set_kostenstelle', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -345,7 +355,10 @@
             .then(function (data) {
                 cartState = data;
                 renderCart(cartState);
-                window.showToast && window.showToast('Artikel übernommen.', 'success');
+                window.showToast && window.showToast(mengeNum + ' × ' + artikelname + ' übernommen.', 'success');
+                if (qtyInput) qtyInput.value = '1';
+                searchInput.focus();
+                searchInput.select();
             })
             .catch(function (err) {
                 console.error('add_to_cart error:', err);
@@ -361,6 +374,41 @@
                 ev.preventDefault();
                 var btn = input.closest('.search-result-item').querySelector('.add-to-cart');
                 if (btn) btn.click();
+            }
+        });
+    }
+
+    // --------- Menge im Warenkorb ändern ----------
+    function setCartQty(input) {
+        var li = input.closest('li');
+        var menge = String(input.value).replace(',', '.').trim();
+        if (menge === '' || Number(menge) < 0 || !isFinite(Number(menge))) {
+            renderCart(cartState);
+            return;
+        }
+        if (Number(menge) === 0 && !window.confirm('Menge 0: Artikel aus dem Warenkorb entfernen?')) {
+            renderCart(cartState);
+            return;
+        }
+        toJson(fetch('/update_cart_qty', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ artikelname: li.dataset.artikel, menge: menge })
+        }))
+        .then(function (data) {
+            cartState = Array.isArray(data) ? data : cartState;
+            renderCart(cartState);
+        })
+        .catch(function () { renderCart(cartState); });
+    }
+    if (cartList) {
+        cartList.addEventListener('change', function (ev) {
+            if (ev.target.matches('.cart-qty-input')) setCartQty(ev.target);
+        });
+        cartList.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Enter' && ev.target.matches('.cart-qty-input')) {
+                ev.preventDefault();
+                ev.target.blur();
             }
         });
     }
@@ -456,6 +504,11 @@
                 window.showToast && window.showToast('Der Warenkorb ist leer.', 'error');
                 return;
             }
+            if (!kstSelect.value) {
+                window.showToast && window.showToast('Bitte zuerst die Kostenstelle wählen.', 'error');
+                kstSelect.focus();
+                return;
+            }
 
             // aktuelle Daten holen (falls Server-Seite rechnet)
             Promise.all([
@@ -472,7 +525,8 @@
                         ' | Gesamt: ' + formatCurrency(it.gesamtpreis) +
                         (vorher !== undefined ? '  ⚠ bereits erfasst: ' + vorher + ' → wird addiert' : '');
                 }).join('\n');
-                var msg = 'Folgende Positionen werden gespeichert:\n\n' + summary;
+                var msg = 'KOSTENSTELLE: ' + kstLabel() + '\nInventurjahr: ' + activeYear +
+                    '\n\nFolgende Positionen werden gespeichert:\n\n' + summary;
                 if (!window.confirm(msg)) return;
 
                 return fetch('/save_to_inventur', {
@@ -534,14 +588,6 @@
     }
 
 
-
-    // --------- Scroll ----------
-    if (scrollToActionsBtn) {
-        scrollToActionsBtn.addEventListener('click', function () {
-            var target = document.getElementById('exportActions');
-            if (target) target.scrollIntoView({ behavior: 'smooth' });
-        });
-    }
 
     // --------- Initial render ----------
     renderCart(cartState);

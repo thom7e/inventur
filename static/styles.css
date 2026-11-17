@@ -383,7 +383,8 @@ select.form-control { padding-right: 2rem; }
 #cart-list .cart-row{display:grid;margin:0;border-radius:0;background:transparent;border:0;border-bottom:1px solid #e9ecef;padding:.45rem 0;;grid-template-columns:1fr auto auto;align-items:center;gap:.75rem;}
 #cart-list .cart-row:last-child{border-bottom:0}
 .cart-name{min-width:0;overflow-wrap:anywhere}
-.cart-fig{display:grid;grid-template-columns:7.5rem 5.5rem;text-align:right;font-variant-numeric:tabular-nums;font-size:.85rem}
+.cart-qty-input{width:4.5rem;padding:.1rem .3rem;border:1px solid #ced4da;border-radius:.25rem;text-align:right;font:inherit}
+.cart-fig{display:grid;grid-template-columns:10rem 5.5rem;align-items:center;text-align:right;font-variant-numeric:tabular-nums;font-size:.85rem}
 .cart-qty{color:#6c757d}
 .cart-sum{font-weight:600}.cart-qty,.cart-sum{font-weight:inherit}.cart-sum{font-weight:600}
 .cart-remove{width:1.75rem;height:1.75rem;line-height:1;border:0;border-radius:50%;background:transparent;color:#6c757d;font-size:1.25rem;cursor:pointer}
