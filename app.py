@@ -478,6 +478,7 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 app.config.update(
     SECRET_KEY=os.getenv("FLASK_SECRET_KEY") or _generate_default_secret(),
+    SESSION_COOKIE_NAME="inventur_session",
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
@@ -661,6 +662,20 @@ def fetch_nc_kostenstellen():
             if _kst_cache['rows'] is not None:
                 return _kst_cache['rows']
     return None
+
+
+CANONICAL_URL = os.getenv("CANONICAL_URL", "").rstrip("/")
+
+
+@app.before_request
+def redirect_to_canonical():
+    """Direktaufruf per IP auf die Cloud-Adresse umleiten (OAuth hat nur diese Callback-URL). Notfall-Login bleibt per IP."""
+    if not CANONICAL_URL or request.script_root or request.method != 'GET':
+        return None
+    if request.endpoint in ('login', 'static'):
+        return None
+    query = request.query_string.decode()
+    return redirect(CANONICAL_URL + request.path + ('?' + query if query else ''))
 
 
 @app.before_request

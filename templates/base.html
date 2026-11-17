@@ -8,9 +8,13 @@
     <script>
     (function () {
         var token = document.querySelector('meta[name="csrf-token"]').content;
+        var root = {{ request.script_root | tojson }};
         var origFetch = window.fetch;
         window.fetch = function (url, opts) {
             opts = opts || {};
+            if (root && typeof url === 'string' && url.charAt(0) === '/' && url.indexOf(root + '/') !== 0) {
+                url = root + url;
+            }
             var method = (opts.method || 'GET').toUpperCase();
             if (method !== 'GET' && method !== 'HEAD') {
                 var h = new Headers(opts.headers || {});
