@@ -87,8 +87,8 @@
                     <td class="article-unit">{{ article.einheit }}</td>
                     <td class="article-price">{{ '%.2f' | format(article.preis) }}</td>
                     <td class="text-right">
-                        <button type="button" class="btn btn-sm btn-primary edit-article" data-artikel="{{ article.artikelname }}">Bearbeiten</button>
-                        <button type="button" class="btn btn-sm btn-danger delete-article" data-artikel="{{ article.artikelname }}">Löschen</button>
+                        <button type="button" class="btn btn-sm btn-outline-primary edit-article" data-artikel="{{ article.artikelname }}">Bearbeiten</button>
+                        <button type="button" class="btn btn-sm btn-outline-danger delete-article" data-artikel="{{ article.artikelname }}">Löschen</button>
                     </td>
                 </tr>
                 {% endfor %}
@@ -166,14 +166,14 @@ var EINHEITEN = {{ einheiten | tojson }};
 
                 var editBtn = document.createElement('button');
                 editBtn.type = 'button';
-                editBtn.className = 'btn btn-primary admin-result-action';
+                editBtn.className = 'btn btn-outline-primary admin-result-action';
                 editBtn.dataset.action = 'edit';
                 editBtn.dataset.artikel = entry.artikelname;
                 editBtn.textContent = 'Bearbeiten';
 
                 var deleteBtn = document.createElement('button');
                 deleteBtn.type = 'button';
-                deleteBtn.className = 'btn btn-danger admin-result-action';
+                deleteBtn.className = 'btn btn-outline-danger admin-result-action';
                 deleteBtn.dataset.action = 'delete';
                 deleteBtn.dataset.artikel = entry.artikelname;
                 deleteBtn.textContent = 'Löschen';

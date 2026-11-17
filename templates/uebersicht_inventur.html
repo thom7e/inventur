@@ -87,7 +87,7 @@
                 <div class="card mb-3 kostenstelle-card" data-kostenstelle="{{ key }}">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <strong>{{ details.label }}</strong>
-                        <span class="small text-light">
+                        <span class="small text-muted">
                             {% if ausgewaehltes_jahr %}Jahr: {{ ausgewaehltes_jahr }} · {% endif %}
                             Summe: {{ '%.2f' | format(details.gesamtsumme|float) }}
                         </span>
