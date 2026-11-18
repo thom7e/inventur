@@ -1,0 +1,47 @@
+{% set n_erfasst = fortschritt | selectattr('status', 'equalto', 'erfasst') | list | length %}
+{% set n_offen = fortschritt | selectattr('status', 'equalto', 'offen') | list | length %}
+{% set n_fertig = fortschritt | selectattr('status', 'equalto', 'fertig') | list | length %}
+<details class="card mb-3" open>
+    <summary class="card-header">
+        <strong>Fortschritt {{ active_inventur_year }}:</strong>
+        {{ n_erfasst }} von {{ n_erfasst + n_offen }} Kostenstellen erfasst, <span id="fsOffen">{{ n_offen }}</span> offen,
+        <span id="fsFertig">{{ n_fertig }}</span> ohne Inventur
+        <span class="small text-muted">(Vergleich mit {{ active_inventur_year - 1 }})</span>
+    </summary>
+    {% if mit_schalter %}
+    <div class="p-3 pb-0">
+        <p class="small text-muted mb-2">Haken bei „keine Inventur“ setzen, wenn auf der Kostenstelle dieses Jahr nichts gezählt wird (Baustelle fertig, Verwaltung, Werkstatt …). Sie verschwindet dann aus der Auswahl beim Erfassen und zählt nicht mehr als offen.</p>
+        <input type="search" class="form-control mb-2" id="fsFilter" placeholder="Kostenstelle filtern">
+    </div>
+    {% endif %}
+    <div class="table-responsive" {% if mit_schalter %}style="max-height:480px;overflow-y:auto"{% endif %}>
+        <table class="table table-sm mb-0" id="fsTable">
+            <thead><tr>
+                <th>Kostenstelle</th><th class="text-right">Pos.</th>
+                <th class="text-right">Summe {{ active_inventur_year }}</th>
+                <th class="text-right">Summe {{ active_inventur_year - 1 }}</th>
+                <th>Status</th>
+                {% if mit_schalter %}<th>Keine Inventur</th>{% endif %}
+            </tr></thead>
+            <tbody>
+            {% for f in fortschritt %}
+                <tr data-key="{{ f.kst_key }}">
+                    <td>{{ f.label }}</td>
+                    <td class="text-right">{{ f.positionen }}</td>
+                    <td class="text-right">{{ '%.2f' | format(f.summe or 0) }}</td>
+                    <td class="text-right">{{ '%.2f' | format(f.summe_vj or 0) }}</td>
+                    <td class="fs-status">
+                        {% if f.status == 'erfasst' %}<span class="badge badge-success">erfasst</span>
+                        {% elif f.status == 'fertig' %}<span class="badge badge-secondary">keine Inventur</span>
+                        {% else %}<span class="badge badge-warning">offen</span>{% endif %}
+                    </td>
+                    {% if mit_schalter %}
+                    <td><input type="checkbox" class="fs-fertig" aria-label="Keine Inventur für {{ f.label }}"
+                               {% if f.status == 'fertig' %}checked{% endif %} {% if f.status == 'erfasst' %}disabled{% endif %}></td>
+                    {% endif %}
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</details>

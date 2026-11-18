@@ -309,3 +309,4 @@ select.form-control { padding-right: 2rem; }
     .cart-fig { grid-column: 1; grid-template-columns: 1fr auto; text-align: left; }
     .cart-remove { grid-row: 1; grid-column: 2; }
 }
+.badge-secondary { background: color-mix(in srgb, var(--muted) 15%, transparent); color: var(--muted); border-color: color-mix(in srgb, var(--muted) 40%, transparent); }

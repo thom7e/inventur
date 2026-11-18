@@ -555,6 +555,23 @@ def ensure_inventur_columns() -> None:
         conn.commit()
 
 
+def ensure_kst_fertig_table() -> None:
+    """Kostenstellen, bei denen im Jahr keine Inventur nötig ist (Baustelle fertig, Verwaltung o. Ä.)."""
+    with db_connection(COST_CENTER_DB) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kst_fertig (
+                jahr INTEGER NOT NULL,
+                kst_key TEXT NOT NULL,
+                erledigt_von TEXT,
+                erledigt_am TEXT,
+                PRIMARY KEY (jahr, kst_key)
+            )
+            """
+        )
+        conn.commit()
+
+
 def _bootstrap() -> None:
     try:
         ensure_cart_table()
@@ -563,6 +580,7 @@ def _bootstrap() -> None:
         ensure_audit_log_table()
         ensure_cost_center_unique_index()
         ensure_inventur_columns()
+        ensure_kst_fertig_table()
 
     except Exception:
         app.logger.exception("Bootstrap failed")
@@ -817,7 +835,32 @@ def admin():
         active_inventur_year=active_year,
         closable_years=closable_years,
         einheiten=EINHEITEN,
+        fortschritt=fetch_fortschritt(active_year),
     )
+
+
+@app.route('/admin/kst_fertig', methods=['POST'])
+def set_kst_fertig():
+    if not session.get('is_admin'):
+        return respond_error('Unbefugter Zugriff', status=403)
+    data = request.get_json(silent=True) or {}
+    key = (data.get('kst_key') or '').strip()
+    if not key:
+        return respond_error('Kostenstelle fehlt.')
+    jahr = get_active_inventur_year()
+    with db_connection(COST_CENTER_DB) as conn:
+        if data.get('fertig'):
+            conn.execute(
+                "INSERT OR REPLACE INTO kst_fertig (jahr, kst_key, erledigt_von, erledigt_am) VALUES (?, ?, ?, ?)",
+                (jahr, key, current_user_label(), datetime.now().strftime('%Y-%m-%d %H:%M')),
+            )
+            msg = f'{key}: keine Inventur {jahr}.'
+        else:
+            conn.execute("DELETE FROM kst_fertig WHERE jahr = ? AND kst_key = ?", (jahr, key))
+            msg = f'{key}: wieder offen.'
+        conn.commit()
+    audit_log('kst_fertig' if data.get('fertig') else 'kst_offen', f'{jahr} {key}')
+    return jsonify({'success': True, 'message': msg})
 
 @app.route('/admin/inventur/update_row', methods=['POST'])
 def admin_update_inventur_row():
@@ -898,7 +941,8 @@ def get_cart():
 def index():
     cart_items = fetch_cart_items(g.cart_token)
 
-    kostenstellen = kostenstellen_choices()
+    fertig = fetch_fertig(get_active_inventur_year())
+    kostenstellen = [c for c in kostenstellen_choices() if c[0] not in fertig]
 
     selected_cost_center = (request.form.get('kostenstelle') if request.method == 'POST' else None) or request.cookies.get(KST_COOKIE)
     search_query = request.form.get('search_query', '').strip() if request.method == 'POST' else ''
@@ -1636,10 +1680,18 @@ def export_inventur_selection():
 
 
 
-def fetch_fortschritt(jahr: int):
-    """Je Kostenstelle aus aktivem Jahr und Vorjahr: Positionen/Summe jetzt, Summe Vorjahr. Offene zuerst."""
+def fetch_fertig(jahr: int) -> set:
     with db_connection(COST_CENTER_DB) as conn:
-        return conn.execute(
+        return {r["kst_key"] for r in conn.execute("SELECT kst_key FROM kst_fertig WHERE jahr = ?", (jahr,))}
+
+
+STATUS_ORDER = {'offen': 0, 'erfasst': 1, 'fertig': 2}
+
+
+def fetch_fortschritt(jahr: int):
+    """Alle aktiven Kostenstellen + alle mit Inventur im Jahr/Vorjahr; Status offen/erfasst/fertig (keine Inventur)."""
+    with db_connection(COST_CENTER_DB) as conn:
+        rows = conn.execute(
             """
             SELECT kst_key,
                    COALESCE(MAX(CASE WHEN jahr = :j THEN kostenstelle END), MAX(kostenstelle)) AS label,
@@ -1649,10 +1701,17 @@ def fetch_fortschritt(jahr: int):
             FROM inventur
             WHERE jahr IN (:j, :v)
             GROUP BY kst_key
-            ORDER BY positionen > 0, kst_key
             """,
             {"j": jahr, "v": jahr - 1},
         ).fetchall()
+    stats = {r["kst_key"]: dict(r) for r in rows}
+    for key, bezeichnung in kostenstellen_choices():
+        stats.setdefault(key, {"kst_key": key, "label": f"{key}-{bezeichnung}",
+                               "positionen": 0, "summe": 0, "summe_vj": 0})
+    fertig = fetch_fertig(jahr)
+    for s in stats.values():
+        s["status"] = 'erfasst' if s["positionen"] else ('fertig' if s["kst_key"] in fertig else 'offen')
+    return sorted(stats.values(), key=lambda s: (STATUS_ORDER[s["status"]], s["kst_key"]))
 
 
 def fetch_available_years():
