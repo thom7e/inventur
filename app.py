@@ -1385,7 +1385,7 @@ def apply_price_factor():
     quantizer = Decimal('1').scaleb(-rounding_places)
 
     with db_connection(ARTICLE_DB) as conn:
-        rows = conn.execute('SELECT artikelname, preis FROM artikel').fetchall()
+        rows = conn.execute('SELECT artikelname, preis FROM artikel WHERE preis IS NOT NULL').fetchall()
         for row in rows:
             base_price = Decimal(str(row['preis']))
             updated_price = (base_price * factor).quantize(quantizer, rounding=ROUND_HALF_UP)
