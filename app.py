@@ -267,14 +267,27 @@ def fetch_article_by_name(artikelname: str):
         ).fetchone()
     return row
 
+def search_key(text: str) -> str:
+    """Ohne Leer-/Sonderzeichen; ä/ae/a (ö, ü ebenso) gelten als gleich."""
+    text = (text or '').casefold().translate(str.maketrans('äöü', 'aou'))
+    text = text.replace('ae', 'a').replace('oe', 'o').replace('ue', 'u')
+    return ''.join(c for c in text if c.isalnum())
+
+
 def fetch_articles(search_query: str):
-    term = f"%{search_query.strip().lower()}%"
+    """Jedes Suchwort muss vorkommen, Reihenfolge egal; zusammenhängende Treffer zuerst."""
+    words = [w for w in map(search_key, search_query.split()) if w]
+    if not words:
+        return []
+    whole = ''.join(words)
     with db_connection(ARTICLE_DB) as conn:
-        cur = conn.execute(
-            "SELECT artikelname, einheit, preis FROM artikel WHERE lower(artikelname) LIKE ? ORDER BY artikelname LIMIT 500",
-            (term,),
-        )
-        return cur.fetchall()
+        rows = conn.execute("SELECT artikelname, einheit, preis FROM artikel ORDER BY artikelname").fetchall()
+    hits = []
+    for row in rows:
+        key = search_key(row['artikelname'])
+        if all(w in key for w in words):
+            hits.append((not key.startswith(whole), whole not in key, len(hits), row))
+    return [h[-1] for h in sorted(hits, key=lambda h: h[:3])][:500]
 
 
 def serialize_article_row(row) -> dict:
