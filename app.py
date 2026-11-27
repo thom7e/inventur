@@ -494,6 +494,7 @@ CART_COOKIE_MAX_AGE = 90 * 24 * 3600
 KST_COOKIE = 'inv_kst'
 
 LAGER_KST = '6010'
+LEER_ARTIKEL = 'Kein Bestand (leere Inventur)'
 LAGERORTE = [
     ('01', 'Aussenlager'), ('02', 'Baggerzähne'), ('03', 'Tiefgarage'), ('04', 'Zementlager'),
     ('05', 'Öllager'), ('06', 'Filterlager'), ('07', 'Farblager'), ('08', 'Kleinteilelager'),
@@ -987,12 +988,12 @@ def recent_articles():
             """
             SELECT artikelname, einheit, MAX(rowid) AS last_id
             FROM inventur
-            WHERE jahr = ? AND kst_key = ?
+            WHERE jahr = ? AND kst_key = ? AND artikelname <> ?
             GROUP BY artikelname, einheit
             ORDER BY last_id DESC
             LIMIT 8
             """,
-            (get_active_inventur_year(), nummer),
+            (get_active_inventur_year(), nummer, LEER_ARTIKEL),
         ).fetchall()
     return jsonify([{'artikelname': r['artikelname'], 'einheit': r['einheit']} for r in rows])
 
@@ -1293,13 +1294,33 @@ def save_to_inventur():
     if not kostenstelle_bezeichnung:
         return respond_error('Keine gültige Kostenstellenbezeichnung gefunden.', 404)
 
+    kostenstelle = f"{kostenstelle_nummer}-{kostenstelle_bezeichnung['kostenstellen_bezeichnung']}"
+
+    # Leere Inventur: Platzhalterzeile mit Menge 0, Warenkorb bleibt unberührt
+    if request.form.get('leer'):
+        with db_connection(COST_CENTER_DB) as conn:
+            if conn.execute("SELECT 1 FROM inventur WHERE kst_key = ? AND jahr = ?",
+                            (kostenstelle_nummer, jahr)).fetchone():
+                return respond_error('Für diese Kostenstelle ist bereits etwas erfasst.', 409)
+            conn.execute(
+                """
+                INSERT INTO inventur
+                (kostenstelle, kst_key, jahr, artikelname, einheit, menge, preis, gesamtpreis, erfasst_von, erfasst_am)
+                VALUES (?, ?, ?, ?, '-', 0, 0, 0, ?, ?)
+                """,
+                (kostenstelle, kostenstelle_nummer, jahr, LEER_ARTIKEL, erfasst_von, erfasst_am),
+            )
+            conn.commit()
+        audit_log('inventur_leer_gespeichert', kostenstelle)
+        return jsonify({'success': True, 'message': 'Leere Inventur gespeichert.'})
+
     cart_items = fetch_cart_items(g.cart_token)
     if not cart_items:
         return respond_error('Warenkorb ist leer.', 400)
 
-    kostenstelle = f"{kostenstelle_nummer}-{kostenstelle_bezeichnung['kostenstellen_bezeichnung']}"
-
     with db_connection(COST_CENTER_DB) as conn:
+        conn.execute("DELETE FROM inventur WHERE kst_key = ? AND jahr = ? AND artikelname = ?",
+                     (kostenstelle_nummer, jahr, LEER_ARTIKEL))
         for item in cart_items:
             artikelname = normalize_article_name(item['artikelname'])
             einheit = (item['einheit'] or '').strip()

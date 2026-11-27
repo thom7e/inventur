@@ -87,6 +87,7 @@
     <p id="cart-total" class="text-right small mb-2" style="display:none"></p>
     <form id="saveToInventurForm" method="post" action="{{ url_for('save_to_inventur') }}">
         <button type="submit" class="btn btn-custom btn-block">In Inventur speichern</button>
+        <button type="button" class="btn btn-outline-secondary btn-block" id="saveEmpty">Nichts vorhanden: leere Inventur speichern</button>
     </form>
 </section>
 {% endblock %}
@@ -147,6 +148,7 @@
 
     // --------- Warenkorb-Render ----------
     function renderCart(items) {
+        document.getElementById('saveEmpty').style.display = items && items.length ? 'none' : '';
         cartList.innerHTML = '';
         if (!items || !items.length) {
             cartHint.style.display = '';
@@ -497,6 +499,25 @@
 
     // --------- Save-to-Inventur ----------
     var saveForm = document.getElementById('saveToInventurForm');
+    document.getElementById('saveEmpty').addEventListener('click', function () {
+        if (!kstSelect.value) {
+            window.showToast && window.showToast('Bitte zuerst die Kostenstelle wählen.', 'error');
+            kstSelect.focus();
+            return;
+        }
+        if (!window.confirm('KOSTENSTELLE: ' + kstLabel() + '\nInventurjahr: ' + activeYear +
+            '\n\nHier ist nichts vorhanden. Als leere Inventur speichern?')) return;
+        var body = new FormData(saveForm);
+        body.append('leer', '1');
+        fetch('/save_to_inventur', { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body: body })
+            .then(function (res) {
+                return res.json().then(function (data) {
+                    window.showToast && window.showToast(data.message || 'Speichern fehlgeschlagen.', res.ok ? 'success' : 'error');
+                    if (res.ok) setTimeout(function () { window.location.reload(); }, 900);
+                });
+            })
+            .catch(function () { window.showToast && window.showToast('Fehler beim Speichern.', 'error'); });
+    });
     if (saveForm) {
         saveForm.addEventListener('submit', function (e) {
             e.preventDefault();
